@@ -1,0 +1,17 @@
+﻿[package]
+name = "abra-guard"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "abra-guard"
+path = "src/main.rs"
+
+[dependencies]
+nacre-core.workspace = true
+nacre-platform.workspace = true
+
+[dependencies.windows]
+workspace = true
+features = ["Win32_Foundation", "Win32_System_Threading"]

@@ -1,0 +1,41 @@
+# build
+/target/
+/dist/
+
+# konfigurasi lokal mesin (jalur toolchain pribadi): lihat README "Build"
+/.cargo/
+
+# berkas editor / OS
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# data lokal hasil uji
+*.log
+parked.txt
+
+# data pribadi / hasil uji: jangan pernah di-commit
+/scratch/
+*.local
+.env
+.env.*
+*.pfx
+*.pem
+*.key
+*.p12
+settings.cfg
+pins.txt
+recents.txt
+icons.txt
+cc_layout.txt
+*.flag
+/target*/
+/iconpack/
+/docs/spikes/
+# ikon pihak ketiga (mis. paket ikon macOS) tidak boleh masuk repo
+macOS-*Icons*/
+*.zip
+*.exe
