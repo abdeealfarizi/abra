@@ -42,6 +42,10 @@ ABRA turns Windows 11 into a desktop with the feel of macOS: a magnifying **dock
 
 It is one small native program. No Electron, no web view, no background services, no account.
 
+<p align="center">
+  <img src="assets/screenshots/desktop.jpg" alt="ABRA desktop: dock, menu bar and the notch showing live lyrics" width="900">
+</p>
+
 ### 🆕 New in 0.3.0
 
 - **A brand‑new notch**: hover to peek, rest to open a panel with **Play**, **Shelf** and **Timer** tabs.
@@ -137,24 +141,54 @@ The glass pill at the top center of the screen.
   - **Music & lyrics** — while a song is loaded, a wide notch with the artwork, **back · play/pause · next** buttons
     (click them without opening the panel) and lyrics on the right.
   - **Empty** — just the small pill.
+
+<p align="center">
+  <img src="assets/screenshots/notch-idle-greeting.png" alt="Notch idle: greeting" width="300">
+  <img src="assets/screenshots/notch-music-lyrics.png" alt="Notch idle: music & lyrics" width="480">
+</p>
+
 - **Activities** replace the idle view, most important first: files being dragged → a timer under 1 minute → a **download**
   → lyrics / music → charging → a running timer → files on the Shelf. An orange / green dot means an app uses the microphone / camera.
 - **Play tab**: song card (artwork, title, seekable progress, controls) and big **lyrics** that scroll with the song.
+
+<p align="center">
+  <img src="assets/screenshots/notch-play.png" alt="Notch Play tab with song card and lyrics" width="560">
+</p>
+
 - **Lyrics**: put your own `Artist - Title.lrc` files in `%APPDATA%\ABRA\lyrics` (*Settings → Notch → Lyrics folder*), or let
   ABRA look them up on [LRCLIB](https://lrclib.net) (can be turned off).
 - **Downloads**: Microsoft Store and Steam downloads show their real percentage with the store’s icon; browser downloads show
   the browser’s icon, a spinning ring and the size downloaded so far. A check mark appears when done.
+
+<p align="center">
+  <img src="assets/screenshots/notch-download.png" alt="Notch download ring" width="300">
+</p>
+
 - **Shelf tab**: drag files from Explorer onto the notch and drop them on a zone:
   **Keep on Shelf** · **Send** · **Copy to…** · **Open with…**. Right‑click a Shelf item to open it, show it in its folder,
   copy its path, send it to your phone or remove it.
+
+<p align="center">
+  <img src="assets/screenshots/notch-drop-zones.png" alt="Drop zones when dragging files onto the notch" width="480">
+</p>
+
 - **Send to phone (Android & iPhone, no app)**:
   1. Drop files on **Send** (or right‑click a Shelf item → *Send to phone*).
   2. The notch stays open with a **QR code**.
   3. Scan it with your phone’s camera, open the link and tap **Download**. Both devices must be on the **same Wi‑Fi**.
   4. The first time, Windows Firewall may ask about ABRA: allow it on **Private networks**.
   5. Click **Done** when finished (the session also ends after 15 idle minutes).
+
+<p align="center">
+  <img src="assets/screenshots/notch-send-qr.png" alt="Send to phone: QR code and progress" width="560">
+</p>
+
 - **Timer tab**: a timer (−5 min · start/pause · reset · +5 min) next to a **calendar** strip; click a date to see its events
   from your Windows calendar.
+
+<p align="center">
+  <img src="assets/screenshots/notch-timer-calendar.png" alt="Timer tab with horizontal calendar" width="560">
+</p>
 </details>
 
 <details open>
@@ -170,6 +204,10 @@ The glass pill at the top center of the screen.
   *On Windows 11 24H2+, Windows only lists nearby networks to apps when **Location** is on; otherwise ABRA shows a limited menu
   with a shortcut to turn Location on.*
 - **Background**: transparent, light, dark or the glass material (*Settings → Menu Bar*).
+
+<p align="center">
+  <img src="assets/screenshots/wifi-menu.png" alt="Wi-Fi menu from the menu bar" width="300">
+</p>
 </details>
 
 <details open>
@@ -182,6 +220,10 @@ The glass pill at the top center of the screen.
 - **Sound / Display sliders**, a **sound output** button (speakers, headphones), Now Playing, Dark Mode, Stage Manager,
   Mission Control, Screenshot and more.
 - **Edit Controls…**: remove modules with **−**, drag to reorder, right‑click to resize, add more from the searchable gallery.
+
+<p align="center">
+  <img src="assets/screenshots/control-center.png" alt="Control Center" width="300">
+</p>
 </details>
 
 <details>
@@ -190,6 +232,10 @@ The glass pill at the top center of the screen.
 - `Ctrl` + `Space` opens it. Type to search **Apps**, **Files**, **Actions** and **Clipboard** (switch with `Ctrl` + `1`…`4`).
 - Built‑in calculator, recent files with thumbnails, file‑type filters and “Show more”.
 - **Actions**: your own quick keys (*Settings → Spotlight*). **Clipboard history** is optional and kept in memory only.
+
+<p align="center">
+  <img src="assets/screenshots/spotlight.png" alt="Spotlight" width="560">
+</p>
 </details>
 
 <details>
@@ -207,6 +253,10 @@ The glass pill at the top center of the screen.
 - **Apps** (`Ctrl` + `Shift` + `Space` or the dock button): a full‑screen grid of installed apps.
 - **Hot corners** (*Settings → Hot Corners*): move the pointer into a screen corner to run an action.
 - **Volume & brightness HUD**: a glass card with your output device name and a 16‑step scale.
+
+<p align="center">
+  <img src="assets/screenshots/apps.png" alt="Apps grid" width="560">
+</p>
 </details>
 
 <details>
@@ -218,6 +268,10 @@ The glass pill at the top center of the screen.
 - Settings has search, back / forward buttons, English and Indonesian, and a **Buy me a coffee** button.
 - **Mac‑style shortcuts**: `` Alt+` `` cycles windows of the same app, `Ctrl+Alt+H` hides, `Ctrl+Alt+M` minimizes,
   `Ctrl+Alt+Q` quits the active app (*Settings → General*).
+
+<p align="center">
+  <img src="assets/screenshots/settings-appearance.png" alt="Settings: Appearance page" width="600">
+</p>
 </details>
 
 ### Keyboard shortcuts
