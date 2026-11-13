@@ -43,11 +43,14 @@ pub fn spawn(notify: impl Fn() + Send + 'static) -> Media {
                 has_media: true,
                 title: TITLES[idx].into(),
                 artist: "Penguji".into(),
+                album: "Album Uji".into(),
                 playing,
                 position_ms: pos(playing, base_ms, since),
                 duration_ms: DUR,
                 can_seek: true,
                 art,
+                // app sumber yang pasti terpasang, hanya agar badge ikon app bisa diuji
+                app: "Microsoft.WindowsStore_8wekyb3d8bbwe!App".into(),
             });
             notify();
             let Ok(c) = cmd_rx.recv() else { return };

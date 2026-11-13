@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use windows::core::w;
 use windows::Foundation::TimeSpan;
 use windows::UI::Composition::{
-    CompositionDrawingSurface, CompositionEasingFunction, CompositionObject, CompositionStretch, Compositor, ContainerVisual, SpriteVisual,
+    AnimationDelayBehavior, CompositionDrawingSurface, CompositionEasingFunction, CompositionObject, CompositionStretch, Compositor, ContainerVisual, SpriteVisual,
 };
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -86,6 +86,15 @@ fn enabled() -> bool {
     prefs::get().anim
 }
 
+/// Efek minimize Genie (bawaan) atau Skala.
+fn genie_on() -> bool {
+    prefs::get().min_effect == 0
+}
+
+/// Jeda sebelum animasi mulai: overlay baru ditampilkan perlu satu-dua frame sebelum terlihat. Tanpa jeda ini awal
+/// animasi terlewat sehingga gerakannya terasa patah. Selama jeda, tangkapan diam di posisi awalnya.
+const START_DELAY: u32 = 40;
+
 fn noop() {}
 
 fn hook(event: u32, hwnd: isize) {
@@ -105,13 +114,14 @@ pub fn init(host: &Host) -> windows_core::Result<()> {
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc), hInstance: hi, lpszClassName: class, ..Default::default() });
         let screen = sys::screen_size();
         let hwnd = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED,
             class,
             w!("abra-fx"),
             WS_POPUP,
             0, 0, screen.0, screen.1,
             None, None, Some(hi), None,
         )?;
+            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
         let surface = attach(&host.compositor, hwnd, (screen.0 as f32, screen.1 as f32))?;
         let gfx = Gfx::new(&host.compositor)?;
         FX_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
@@ -238,7 +248,7 @@ pub fn restore(target: isize, icon: (i32, i32, i32, i32), dock: isize) -> bool {
         fx.snap = Some(s);
         fx.pending_restore = Some((target, dock));
         unsafe {
-            SetTimer(Some(fx.hwnd), T_RESTORE, Kind::Restore.ms() - 30, None);
+            SetTimer(Some(fx.hwnd), T_RESTORE, START_DELAY + Kind::Restore.ms() - 30, None);
         }
         true
     })
@@ -253,10 +263,12 @@ enum Kind {
 }
 
 impl Kind {
+    /// Durasi animasi. Genie sedikit lebih panjang agar alirannya terbaca (seperti macOS), Skala lebih singkat.
     fn ms(self) -> u32 {
+        let g = genie_on();
         match self {
-            Kind::Minimize => 430,
-            Kind::Restore => 380,
+            Kind::Minimize => if g { 540 } else { 380 },
+            Kind::Restore => if g { 470 } else { 340 },
             Kind::Close => 190,
         }
     }
@@ -278,6 +290,8 @@ impl Fx {
             a.InsertKeyFrameWithEasingFunction(*t, *v, &self.ease(*c1, *c2)?)?;
         }
         a.SetDuration(span(ms))?;
+        a.SetDelayTime(span(START_DELAY))?;
+        a.SetDelayBehavior(AnimationDelayBehavior::SetInitialValueBeforeDelay)?;
         obj.StartAnimation(&HSTRING::from(prop), &a)
     }
 
@@ -287,13 +301,15 @@ impl Fx {
             a.InsertKeyFrame(*t, *v)?;
         }
         a.SetDuration(span(ms))?;
+        a.SetDelayTime(span(START_DELAY))?;
+        a.SetDelayBehavior(AnimationDelayBehavior::SetInitialValueBeforeDelay)?;
         obj.StartAnimation(&HSTRING::from(prop), &a)
     }
 
     /// Mainkan animasi `kind` dari/ke persegi `from`→`to` (px layar) memakai tangkapan `surface`.
     /// Untuk Minimize/Close: `from` = jendela, `to` = ikon. Untuk Restore: `from` = ikon, `to` = jendela.
     fn play(&mut self, surface: CompositionDrawingSurface, a: (i32, i32, i32, i32), b: (i32, i32, i32, i32), kind: Kind) {
-        if kind != Kind::Close {
+        if kind != Kind::Close && genie_on() {
             let (win, icon) = if kind == Kind::Restore { (b, a) } else { (a, b) };
             match self.play_genie(surface, win, icon, kind == Kind::Restore) {
                 Ok(()) => {
@@ -301,7 +317,7 @@ impl Fx {
                     unsafe {
                         let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, self.screen.0, self.screen.1, SWP_NOACTIVATE);
                         let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-                        SetTimer(Some(self.hwnd), T_HIDE, kind.ms() + 80, None);
+                        SetTimer(Some(self.hwnd), T_HIDE, START_DELAY + kind.ms() + 80, None);
                     }
                 }
                 Err(e) => log::line("fx", &format!("genie gagal: {e}")),
@@ -380,7 +396,7 @@ impl Fx {
             unsafe {
                 let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, self.screen.0, self.screen.1, SWP_NOACTIVATE);
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-                SetTimer(Some(self.hwnd), T_HIDE, ms + 80, None);
+                SetTimer(Some(self.hwnd), T_HIDE, START_DELAY + ms + 80, None);
             }
             Ok(())
         };
@@ -389,48 +405,28 @@ impl Fx {
         }
     }
 
-    /// Genie: jendela dipecah jadi irisan horizontal; tiap irisan bergerak sepanjang kurva corong ke (atau dari) ikon.
-    /// Baris bawah menyempit dan tiba lebih dulu, baris atas menyusul, persis pola genie macOS.
+    /// Genie: jendela dipecah jadi irisan horizontal; tiap irisan menempuh jalur corong ke (atau dari) ikon. Geometri
+    /// dari `nacre_core::genie` (diuji); di sini hanya diubah menjadi animasi compositor dengan banyak titik kunci
+    /// supaya gerakannya mulus di 60 fps, dan dimulai setelah jeda singkat agar frame awal tidak terlewat.
     fn play_genie(&mut self, surface: CompositionDrawingSurface, win: (i32, i32, i32, i32), icon: (i32, i32, i32, i32), reverse: bool) -> windows_core::Result<()> {
+        use nacre_core::genie::{self, Rect as GRect};
         if let Some(old) = self.genie.take() {
             let _ = self.surface.root.Children()?.Remove(&old);
         }
         if let Some(old) = self.sprite.take() {
             let _ = self.surface.root.Children()?.Remove(&old);
         }
-        let (wx, wy, ww, wh) = (win.0 as f32, win.1 as f32, win.2.max(1) as f32, win.3.max(1) as f32);
-        let (ix, iy, iw, ih) = (icon.0 as f32, icon.1 as f32, icon.2.max(1) as f32, icon.3.max(1) as f32);
-        let (wcx, icx) = (wx + ww / 2.0, ix + iw / 2.0);
-        let n = ((wh / 4.0) as usize).clamp(40, 110);
-        let sh = wh / n as f32;
+        let w = GRect { x: win.0 as f32, y: win.1 as f32, w: win.2.max(1) as f32, h: win.3.max(1) as f32 };
+        let ic = GRect { x: icon.0 as f32, y: icon.1 as f32, w: icon.2.max(1) as f32, h: icon.3.max(1) as f32 };
+        let n = ((w.h / 5.0) as usize).clamp(48, 120);
+        let sh = w.h / n as f32;
         let ms = if reverse { Kind::Restore.ms() } else { Kind::Minimize.ms() };
-        let samples = 20usize;
-
-        let smooth = |x: f32| {
-            let x = x.clamp(0.0, 1.0);
-            x * x * (3.0 - 2.0 * x)
-        };
-        let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
-        // Geometri pada parameter genie τ (0 = jendela utuh, 1 = menyatu di ikon) untuk irisan ke-i.
-        let geom = |i: usize, tau: f32| -> (Vector3, Vector3) {
-            let v = (i as f32 + 0.5) / n as f32;
-            let st = smooth(tau);
-            let sb = smooth(tau * 1.45);
-            let (y_top, y_bot) = (lerp(wy, iy, st), lerp(wy + wh, iy + ih, sb));
-            let g = smooth(tau * 1.7 - (1.0 - v) * 0.7);
-            let gx = smooth(g);
-            let width = lerp(ww, iw, gx).max(1.0);
-            let cx = lerp(wcx, icx, gx);
-            let row_h = (y_bot - y_top) / n as f32;
-            let y = y_top + row_h * i as f32;
-            // sedikit tumpang tindih agar tak ada garis antar irisan
-            let (sx, sy) = (width / ww, (row_h + 1.0) / sh);
-            (Vector3 { X: cx - width / 2.0, Y: y, Z: 0.0 }, Vector3 { X: sx, Y: sy.max(0.001), Z: 1.0 })
-        };
-
+        // ±1 titik kunci per 12 ms: interpolasi linear antar titik tidak lagi terasa patah
+        let samples = ((ms / 12) as usize).clamp(24, 48);
         let root = self.comp.CreateContainerVisual()?;
         self.surface.root.Children()?.InsertAtTop(&root)?;
-        let dur = span(ms);
+        let (dur, delay) = (span(ms), span(START_DELAY));
+        let v3 = |p: (f32, f32), z: f32| Vector3 { X: p.0, Y: p.1, Z: z };
         for i in 0..n {
             let s = self.comp.CreateSpriteVisual()?;
             let b = self.comp.CreateSurfaceBrushWithSurface(&surface)?;
@@ -438,26 +434,26 @@ impl Fx {
             // Tiap irisan menampilkan baris ke-i dari tangkapan penuh.
             b.SetTransformMatrix(Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: n as f32, M31: 0.0, M32: -(i as f32) * sh })?;
             s.SetBrush(&b)?;
-            s.SetSize(Vector2 { X: ww, Y: sh })?;
+            s.SetSize(Vector2 { X: w.w, Y: sh })?;
             s.SetCenterPoint(Vector3 { X: 0.0, Y: 0.0, Z: 0.0 })?;
-            let (o0, s0) = geom(i, if reverse { 1.0 } else { 0.0 });
-            s.SetOffset(o0)?;
-            s.SetScale(s0)?;
+            let (o0, s0) = genie::slice(i, n, genie::tau_at(0.0, reverse), w, ic);
+            s.SetOffset(v3(o0, 0.0))?;
+            s.SetScale(v3(s0, 1.0))?;
             root.Children()?.InsertAtTop(&s)?;
 
             let ao = self.comp.CreateVector3KeyFrameAnimation()?;
             let asc = self.comp.CreateVector3KeyFrameAnimation()?;
             for k in 0..samples {
                 let t = k as f32 / (samples - 1) as f32;
-                // Minimize: lambat-cepat-lambat; Restore: mulai cepat lalu mengendap (parameter dibalik).
-                let tau = if reverse { 1.0 - (1.0 - (1.0 - t).powi(3)) } else { smooth(t) * 0.35 + t * t * (3.0 - 2.0 * t) * 0.65 };
-                let tau = if reverse { 1.0 - (1.0 - (1.0 - t).powi(3)) } else { tau };
-                let (o, sc) = geom(i, tau);
-                ao.InsertKeyFrame(t, o)?;
-                asc.InsertKeyFrame(t, sc)?;
+                let (o, sc) = genie::slice(i, n, genie::tau_at(t, reverse), w, ic);
+                ao.InsertKeyFrame(t, v3(o, 0.0))?;
+                asc.InsertKeyFrame(t, v3(sc, 1.0))?;
             }
-            ao.SetDuration(dur)?;
-            asc.SetDuration(dur)?;
+            for a in [&ao, &asc] {
+                a.SetDuration(dur)?;
+                a.SetDelayTime(delay)?;
+                a.SetDelayBehavior(AnimationDelayBehavior::SetInitialValueBeforeDelay)?;
+            }
             let obj: CompositionObject = s.cast()?;
             obj.StartAnimation(&HSTRING::from("Offset"), &ao)?;
             obj.StartAnimation(&HSTRING::from("Scale"), &asc)?;
@@ -466,14 +462,16 @@ impl Fx {
         let fade = self.comp.CreateScalarKeyFrameAnimation()?;
         if reverse {
             fade.InsertKeyFrame(0.0, 0.0)?;
-            fade.InsertKeyFrame(0.1, 1.0)?;
+            fade.InsertKeyFrame(0.08, 1.0)?;
             fade.InsertKeyFrame(1.0, 1.0)?;
         } else {
             fade.InsertKeyFrame(0.0, 1.0)?;
-            fade.InsertKeyFrame(0.86, 1.0)?;
+            fade.InsertKeyFrame(0.88, 1.0)?;
             fade.InsertKeyFrame(1.0, 0.0)?;
         }
         fade.SetDuration(dur)?;
+        fade.SetDelayTime(delay)?;
+        fade.SetDelayBehavior(AnimationDelayBehavior::SetInitialValueBeforeDelay)?;
         root.SetOpacity(if reverse { 0.0 } else { 1.0 })?;
         root.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from("Opacity"), &fade)?;
         self.genie = Some(root);
@@ -592,13 +590,14 @@ impl Fx {
             let class = w!("AbraShadow");
             RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(shadow_proc), hInstance: hi, lpszClassName: class, ..Default::default() });
             let hwnd = CreateWindowExW(
-                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED,
                 class,
                 w!("abra-shadow"),
                 WS_POPUP,
                 0, 0, 100, 100,
                 None, None, Some(hi), None,
             )?;
+            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
             let surface = attach(&self.comp, hwnd, (100.0, 100.0))?;
             let sprite = self.comp.CreateSpriteVisual()?;
             surface.root.Children()?.InsertAtTop(&sprite)?;

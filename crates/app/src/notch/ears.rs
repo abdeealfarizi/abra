@@ -1,4 +1,4 @@
-﻿//! "Telinga" cekung yang menyatukan island dengan tepi atas layar (seperti notch).
+﻿//! "Telinga" cekung yang menyatukan notch dengan tepi atas layar (seperti notch).
 //! Dibuat sebagai bitmap kecil beranti-alias (supersampling), bukan geometri path, agar tidak butuh Win2D.
 
 use nacre_platform::icons::Bitmap;

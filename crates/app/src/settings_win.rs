@@ -6,7 +6,7 @@ use crate::popup::Popup;
 use crate::prefs::{self, Role, WM_PREFS};
 use nacre_core::hud::slider;
 use nacre_core::i18n::Lang;
-use nacre_core::settings::{Behavior, Material, BlurStyle, Theme};
+use nacre_core::settings::{Behavior, Material, Theme};
 use nacre_platform::icons::Bitmap;
 use nacre_platform::text::{measure, render, render_face, Style, ICON_FACE};
 use nacre_platform::{log, sys};
@@ -18,7 +18,7 @@ use windows::UI::Color;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor, ContainerVisual};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows_core::Interface;
 use windows_numerics::{Vector2, Vector3};
@@ -33,11 +33,20 @@ const VIEW_TOP: f32 = 56.0;
 
 #[derive(Clone, Copy, Debug)]
 enum Action {
+    /// Mulai mengetik di kolom teks (0 nama panggilan, 1 teks sapaan).
+    EditText(u8),
+    /// Notch saat diam: 0 sapaan & info, 1 kosong.
+    NotchIdle(u8),
+    LyricsCompact,
+    NotchDownloads,
+    NotchSend,
+    LyricsOnline,
+    LyricsDir,
+    Donate,
     Close,
     Takeover,
     Dock(Behavior),
     Notch(Behavior),
-    Style(BlurStyle),
     Theme(Theme),
     Lang(Lang),
     Tab(u8),
@@ -64,6 +73,11 @@ enum Action {
     ClipHistory,
     MacKeys,
     Accent(u8),
+    IconVariant(u8),
+    MinEffect(u8),
+    Back,
+    Forward,
+    Search,
     IconStyle(u8),
     IconTint(u8),
     NotchOn,
@@ -92,8 +106,39 @@ enum RowDef {
     Slider(&'static str, u8, u8),
     /// Tombol bernilai (mis. hot corner): label, nilai, aksi.
     Pick(&'static str, String, Action),
-    /// Deretan warna aksen: label, indeks terpilih.
+    /// Deretan warna aksen (Multiwarna + 8 warna): label, indeks terpilih (0 = Multiwarna).
     Swatches(&'static str, usize),
+    /// Kartu pratinjau bergambar seperti Pengaturan Tampilan macOS: label, (nama, gambar, aksi), terpilih.
+    Thumbs(&'static str, Vec<(&'static str, Thumb, Action)>, usize),
+    /// Radio rata kanan tanpa label (lanjutan baris di atasnya): (nama, aksi), terpilih.
+    Radios(Vec<(&'static str, Action)>, usize),
+    /// Kolom teks yang bisa diketik: label, nilai sekarang, teks contoh saat kosong, nomor kolom.
+    Text(&'static str, String, String, u8),
+}
+
+/// Gambar kartu pratinjau.
+#[derive(Clone, Copy)]
+enum Thumb {
+    /// 0 Auto, 1 Terang, 2 Gelap.
+    Appear(u8),
+    Icon(nacre_core::settings::IconStyle),
+}
+
+/// Nama warna aksen (indeks 0 = Multiwarna, lalu urutan `ACCENTS`).
+const ACCENT_NAMES: [&str; 9] = ["Multiwarna", "Biru", "Ungu", "Merah Muda", "Merah", "Oranye", "Kuning", "Hijau", "Grafit"];
+
+fn row_label(r: &RowDef) -> &'static str {
+    match r {
+        RowDef::Toggle(l, ..) | RowDef::Seg(l, ..) | RowDef::Slider(l, ..) | RowDef::Pick(l, ..) | RowDef::Swatches(l, ..) | RowDef::Thumbs(l, ..) | RowDef::Text(l, ..) => l,
+        RowDef::Radios(..) => "",
+    }
+}
+
+/// Halaman donasi (Saweria) pembuat ABRA.
+const DONATE_URL: &str = "https://saweria.co/kreativadev";
+
+fn user_name() -> String {
+    std::env::var("USERNAME").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| "ABRA".to_string())
 }
 
 struct Win {
@@ -110,6 +155,16 @@ struct Win {
     tab: u8,
     scroll: f32,
     content_h: f32,
+    /// Riwayat halaman untuk tombol ◀ ▶ di bilah judul.
+    history: Vec<u8>,
+    hpos: usize,
+    /// Kolom cari di sidebar.
+    search: String,
+    search_focus: bool,
+    thumbs: HashMap<String, CompositionDrawingSurface>,
+    /// Kolom teks yang sedang diketik dan isinya (belum disimpan).
+    edit: Option<u8>,
+    edit_buf: String,
 }
 
 thread_local! {
@@ -142,7 +197,7 @@ fn create(comp: &Compositor) -> windows_core::Result<()> {
     };
     let _ = popup.panel.set_tier(tier);
     let _ = popup.panel.set_radius(24.0 * dpi);
-    let mut win = Box::new(Win { popup, gfx, comp: comp.clone(), dpi, size: (0.0, 0.0), regions: vec![], cache: HashMap::new(), dragging: None, press: None, tab: 0, scroll: 0.0, content_h: 0.0 });
+    let mut win = Box::new(Win { popup, gfx, comp: comp.clone(), dpi, size: (0.0, 0.0), regions: vec![], cache: HashMap::new(), dragging: None, press: None, tab: 0, scroll: 0.0, content_h: 0.0, history: vec![0], hpos: 0, search: String::new(), search_focus: false, thumbs: HashMap::new(), edit: None, edit_buf: String::new() });
     win.render();
     let (sw, sh) = sys::screen_size();
     let (w, h) = (win.size.0 as i32, win.size.1 as i32);
@@ -285,6 +340,54 @@ impl Win {
         let _ = make();
     }
 
+    /// Gambar permukaan `s` apa adanya di (x, y) ukuran w×h.
+    fn sprite(&self, parent: &ContainerVisual, s: &CompositionDrawingSurface, x: f32, y: f32, w: f32, h: f32) {
+        let make = || -> windows_core::Result<()> {
+            let b = self.comp.CreateSurfaceBrushWithSurface(s)?;
+            b.SetStretch(CompositionStretch::Fill)?;
+            let v = self.comp.CreateSpriteVisual()?;
+            v.SetBrush(&b)?;
+            v.SetSize(Vector2 { X: w, Y: h })?;
+            v.SetOffset(Vector3 { X: x, Y: y, Z: 0.0 })?;
+            parent.Children()?.InsertAtTop(&v)
+        };
+        let _ = make();
+    }
+
+    /// Permukaan pratinjau dari cache (dibuat sekali per kunci).
+    fn thumb_surface(&mut self, key: String, w: u32, h: u32, make: impl FnOnce() -> Vec<u8>) -> Option<CompositionDrawingSurface> {
+        if let Some(s) = self.thumbs.get(&key) {
+            return Some(s.clone());
+        }
+        if self.thumbs.len() > 64 {
+            self.thumbs.clear();
+        }
+        let s = self.gfx.surface_from_bgra(w, h, &make()).ok()?;
+        self.thumbs.insert(key, s.clone());
+        Some(s)
+    }
+
+    /// Pindah ke halaman `t`; `push` mencatatnya di riwayat ◀ ▶.
+    fn go(&mut self, t: u8, push: bool) {
+        if push && t != self.tab {
+            self.history.truncate(self.hpos + 1);
+            self.history.push(t);
+            self.hpos = self.history.len() - 1;
+        }
+        self.tab = t;
+        self.scroll = 0.0;
+        self.render();
+    }
+
+    /// Halaman cocok dengan kolom cari (judul atau label salah satu barisnya).
+    fn page_matches(&self, idx: u8, name: &str) -> bool {
+        let q = self.search.trim().to_lowercase();
+        if q.is_empty() || name.to_lowercase().contains(&q) {
+            return true;
+        }
+        self.page(idx).iter().any(|(h, rows)| h.is_some_and(|h| h.to_lowercase().contains(&q)) || rows.iter().any(|r| row_label(r).to_lowercase().contains(&q)))
+    }
+
     fn region(&mut self, x: f32, y: f32, w: f32, h: f32, a: Action) {
         self.regions.push(Region { x, y, w, h, a, scroll: true });
     }
@@ -309,9 +412,26 @@ impl Win {
         }
     }
 
+    /// Simpan kolom teks yang sedang diketik ke pengaturan.
+    fn commit_edit(&mut self) {
+        let Some(f) = self.edit.take() else { return };
+        let t = nacre_core::settings::ShortText::new(&self.edit_buf);
+        prefs::update(|s| {
+            if f == 0 {
+                s.greet_name = t;
+            } else {
+                s.greet_text = t;
+            }
+        });
+        self.render();
+    }
+
     fn row_height(r: &RowDef) -> f32 {
         match r {
             RowDef::Slider(..) => 50.0,
+            RowDef::Thumbs(..) => 96.0,
+            RowDef::Radios(..) => 34.0,
+            RowDef::Swatches(..) => 58.0,
             _ => 44.0,
         }
     }
@@ -326,19 +446,20 @@ impl Win {
         let accent = prefs::accent();
         for (i, r) in rows.iter().enumerate() {
             let rh = Self::row_height(r) * d;
-            if i > 0 {
+            if i > 0 && !matches!(r, RowDef::Radios(..)) {
                 self.rect(c, x0 + 16.0 * d, y, cw - 32.0 * d, 1.0, 0.0, col(look.fg, 28));
             }
             let (lx, rx) = (x0 + 16.0 * d, x0 + cw - 16.0 * d);
             match r {
                 RowDef::Toggle(label, on, act) => {
                     self.text(c, label, lx, y + (rh - 17.0 * d) / 2.0, 13.5, 400, look.fg, 0.95, 0);
-                    let (tw, th) = (42.0 * d, 24.0 * d);
+                    // Tahoe: jalur sakelar lebih panjang dan ramping (±2:1) dengan kenop berbentuk pil
+                    let (tw, th) = (46.0 * d, 22.0 * d);
                     let (tx, ty) = (rx - tw, y + (rh - th) / 2.0);
                     self.rect(c, tx, ty, tw, th, th / 2.0, if *on { col(accent, 255) } else { col(look.fg, 60) });
                     let knob = th - 4.0 * d;
                     let pressed = self.press.map_or(false, |(px, py)| px >= x0 && px < x0 + cw && py + self.scroll >= y && py + self.scroll < y + rh && py > VIEW_TOP * d);
-                    let kw = if pressed { knob * 1.5 } else { knob * 1.25 };
+                    let kw = if pressed { knob * 1.8 } else { knob * 1.55 };
                     let kx = if *on { tx + tw - kw - 2.0 * d } else { tx + 2.0 * d };
                     if pressed {
                         self.glass_knob(c, kx, ty + 2.0 * d, kw, knob);
@@ -349,17 +470,23 @@ impl Win {
                 }
                 RowDef::Seg(label, opts, sel) => {
                     self.text(c, label, lx, y + (rh - 17.0 * d) / 2.0, 13.5, 400, look.fg, 0.95, 0);
-                    let widths: Vec<f32> = opts.iter().map(|(t, _)| (measure(t, &Style { px: (12.5 * d).round() as i32, weight: 500 }).0 as f32 + 24.0 * d).max(54.0 * d)).collect();
+                    // Tahoe: kapsul ramping dengan segmen yang lebih panjang
+                    // padding dikurangi bila segmen terlalu lebar untuk ruang di kanan label
+                    let texts: Vec<f32> = opts.iter().map(|(t, _)| measure(t, &Style { px: (12.5 * d).round() as i32, weight: 500 }).0 as f32).collect();
+                    let avail = (rx - lx) - measure(label, &Style { px: (13.5 * d).round() as i32, weight: 400 }).0 as f32 - 28.0 * d;
+                    let need = |pad: f32, min: f32| texts.iter().map(|w| (w + pad).max(min)).sum::<f32>() + 6.0 * d;
+                    let (pad, min) = if need(32.0 * d, 66.0 * d) <= avail { (32.0 * d, 66.0 * d) } else { (18.0 * d, 48.0 * d) };
+                    let widths: Vec<f32> = texts.iter().map(|w| (w + pad).max(min)).collect();
                     let total_w: f32 = widths.iter().sum::<f32>() + 6.0 * d;
-                    let (bx, bh) = (rx - total_w, 28.0 * d);
+                    let (bx, bh) = (rx - total_w, 26.0 * d);
                     let by = y + (rh - bh) / 2.0;
-                    self.rect(c, bx, by, total_w, bh, 9.0 * d, col(look.fg, 30));
+                    self.rect(c, bx, by, total_w, bh, bh / 2.0, col(look.fg, 30));
                     let inverse = if look.dark { [10u8, 10, 12] } else { [255u8, 255, 255] };
                     let mut sx = bx + 3.0 * d;
                     for (i, (t, act)) in opts.iter().enumerate() {
                         let on = i == *sel;
                         if on {
-                            self.rect(c, sx, by + 3.0 * d, widths[i], bh - 6.0 * d, 7.0 * d, col(look.fg, 235));
+                            self.rect(c, sx, by + 3.0 * d, widths[i], bh - 6.0 * d, (bh - 6.0 * d) / 2.0, col(look.fg, 235));
                         }
                         let rgb = if on { inverse } else { look.fg };
                         self.text(c, t, sx + widths[i] / 2.0, by + (bh - 16.0 * d) / 2.0 - 1.0, 12.5, if on { 600 } else { 500 }, rgb, if on { 1.0 } else { 0.85 }, 1);
@@ -390,29 +517,114 @@ impl Win {
                     self.region(tx - 8.0 * d, y + 4.0 * d, tw + 16.0 * d, rh - 8.0 * d, Action::Slider(*id, tx, tw));
                 }
                 RowDef::Swatches(label, sel) => {
-                    self.text(c, label, lx, y + (rh - 17.0 * d) / 2.0, 13.5, 400, look.fg, 0.95, 0);
-                    let (dia, gap) = (20.0 * d, 9.0 * d);
-                    let total_w = nacre_core::settings::ACCENTS.len() as f32 * (dia + gap) - gap;
+                    // Multiwarna + 8 warna; nama warna terpilih tampil kecil di bawahnya (seperti macOS)
+                    self.text(c, label, lx, y + 13.0 * d, 13.5, 400, look.fg, 0.95, 0);
+                    let (dia, gap) = (19.0 * d, 10.0 * d);
+                    let n = nacre_core::settings::ACCENTS.len() + 1;
+                    let total_w = n as f32 * (dia + gap) - gap;
                     let mut sx = rx - total_w;
-                    for (i, rgb) in nacre_core::settings::ACCENTS.iter().enumerate() {
-                        let cy = y + (rh - dia) / 2.0;
-                        self.rect(c, sx, cy, dia, dia, dia / 2.0, col(*rgb, 255));
-                        if i == *sel {
-                            // cincin pilihan: lingkaran putih kecil di tengah
-                            self.rect(c, sx + dia * 0.30, cy + dia * 0.30, dia * 0.40, dia * 0.40, dia * 0.20, Color { A: 255, R: 255, G: 255, B: 255 });
+                    let cy = y + 12.0 * d;
+                    for i in 0..n {
+                        if i == 0 {
+                            let key = format!("multi|{}", dia.round());
+                            let px = dia.round() as u32;
+                            if let Some(s) = self.thumb_surface(key, px, px, || nacre_core::preview::multicolor(px)) {
+                                self.sprite(c, &s, sx, cy, dia, dia);
+                            }
+                        } else {
+                            self.rect(c, sx, cy, dia, dia, dia / 2.0, col(nacre_core::settings::ACCENTS[i - 1], 255));
                         }
-                        self.region(sx - 2.0 * d, y, dia + 4.0 * d, rh, Action::Accent(i as u8));
+                        if i == *sel {
+                            self.rect(c, sx + dia * 0.32, cy + dia * 0.32, dia * 0.36, dia * 0.36, dia * 0.18, Color { A: 255, R: 255, G: 255, B: 255 });
+                            self.text(c, prefs::tr(ACCENT_NAMES[i]), sx + dia / 2.0, cy + dia + 5.0 * d, 10.5, 500, look.fg, 0.7, 1);
+                        }
+                        let v = if i == 0 { nacre_core::settings::ACCENT_MULTI } else { (i - 1) as u8 };
+                        self.region(sx - 2.0 * d, y, dia + 4.0 * d, rh, Action::Accent(v));
                         sx += dia + gap;
                     }
                 }
+                RowDef::Thumbs(label, opts, sel) => {
+                    self.text(c, label, lx, y + 14.0 * d, 13.5, 400, look.fg, 0.95, 0);
+                    let icon_kind = matches!(opts.first().map(|o| o.1), Some(Thumb::Icon(_)));
+                    let (tw, th) = if icon_kind { (48.0 * d, 48.0 * d) } else { (70.0 * d, 46.0 * d) };
+                    let gap = 16.0 * d;
+                    let total = opts.len() as f32 * tw + (opts.len() as f32 - 1.0) * gap;
+                    let mut x = rx - total;
+                    let ty = y + 12.0 * d;
+                    let dark_icons = prefs::icon_dark();
+                    let s0 = prefs::get();
+                    for (i, (name, kind, act)) in opts.iter().enumerate() {
+                        let on = i == *sel;
+                        let r = if icon_kind { tw * 0.22 } else { th * 0.14 };
+                        if on {
+                            // cincin pilihan warna aksen
+                            self.rect(c, x - 3.0 * d, ty - 3.0 * d, tw + 6.0 * d, th + 6.0 * d, r + 3.0 * d, col(accent, 255));
+                            self.rect(c, x - 1.0 * d, ty - 1.0 * d, tw + 2.0 * d, th + 2.0 * d, r + 1.0 * d, col(if look.dark { [30, 30, 34] } else { [246, 246, 248] }, 255));
+                        }
+                        let (pw, ph) = (tw.round() as u32, th.round() as u32);
+                        let surf = match *kind {
+                            Thumb::Appear(k) => self.thumb_surface(format!("appear|{k}|{pw}x{ph}"), pw, ph, || nacre_core::preview::appearance(k, pw, ph)),
+                            Thumb::Icon(st) => {
+                                let tint = s0.icon_tint;
+                                self.thumb_surface(format!("icon|{st:?}|{tint}|{dark_icons}|{pw}"), pw, pw, || nacre_core::preview::icon_tile(st, tint, dark_icons, pw))
+                            }
+                        };
+                        if let Some(sf) = surf {
+                            self.sprite(c, &sf, x, ty, tw, th);
+                        }
+                        self.text(c, name, x + tw / 2.0, ty + th + 6.0 * d, 11.5, if on { 600 } else { 400 }, look.fg, if on { 1.0 } else { 0.7 }, 1);
+                        self.region(x - 4.0 * d, y, tw + 8.0 * d, rh, *act);
+                        x += tw + gap;
+                    }
+                }
+                RowDef::Radios(opts, sel) => {
+                    // rata kanan: lingkaran + nama, seperti radio Light · Dark · Auto di macOS
+                    let rpx = (12.5 * d).round() as i32;
+                    let dia = 14.0 * d;
+                    let widths: Vec<f32> = opts.iter().map(|(t, _)| dia + 6.0 * d + measure(t, &Style { px: rpx, weight: 400 }).0 as f32 + 16.0 * d).collect();
+                    let mut x = rx - widths.iter().sum::<f32>() + 16.0 * d;
+                    let cy = y + rh / 2.0 - 4.0 * d;
+                    for (i, (t, act)) in opts.iter().enumerate() {
+                        let on = i == *sel;
+                        if on {
+                            self.rect(c, x, cy - dia / 2.0, dia, dia, dia / 2.0, col(accent, 255));
+                            self.rect(c, x + dia * 0.32, cy - dia * 0.18, dia * 0.36, dia * 0.36, dia * 0.18, Color { A: 255, R: 255, G: 255, B: 255 });
+                        } else {
+                            self.rect(c, x, cy - dia / 2.0, dia, dia, dia / 2.0, col(look.fg, 70));
+                            self.rect(c, x + 1.2 * d, cy - dia / 2.0 + 1.2 * d, dia - 2.4 * d, dia - 2.4 * d, dia / 2.0 - 1.2 * d, col(if look.dark { [44, 44, 48] } else { [244, 244, 246] }, 255));
+                        }
+                        self.text(c, t, x + dia + 6.0 * d, cy - 8.0 * d, 12.5, 400, look.fg, 0.9, 0);
+                        self.region(x - 4.0 * d, y, widths[i], rh, *act);
+                        x += widths[i];
+                    }
+                }
+                RowDef::Text(label, value, hint, field) => {
+                    self.text(c, label, lx, y + (rh - 17.0 * d) / 2.0, 13.5, 400, look.fg, 0.95, 0);
+                    let editing = self.edit == Some(*field);
+                    let (bw, bh) = (240.0 * d, 26.0 * d);
+                    let (bx, by) = (rx - bw, y + (rh - bh) / 2.0);
+                    self.rect(c, bx, by, bw, bh, bh / 2.0, col(look.fg, if editing { 40 } else { 26 }));
+                    if editing {
+                        self.rect(c, bx, by, bw, bh, bh / 2.0, col(accent, 40));
+                    }
+                    let (shown, op) = if editing {
+                        (format!("{}|", self.edit_buf), 1.0)
+                    } else if value.is_empty() {
+                        (hint.clone(), 0.45)
+                    } else {
+                        (value.clone(), 0.95)
+                    };
+                    self.text(c, &shown, bx + 12.0 * d, by + (bh - 16.0 * d) / 2.0 - 1.0, 12.5, 500, look.fg, op, 0);
+                    self.region(bx, y, bw, rh, Action::EditText(*field));
+                }
                 RowDef::Pick(label, value, act) => {
                     self.text(c, label, lx, y + (rh - 17.0 * d) / 2.0, 13.5, 400, look.fg, 0.95, 0);
-                    let vw = measure(value, &Style { px: (12.5 * d).round() as i32, weight: 500 }).0 as f32 + 30.0 * d;
-                    let (bx, bh) = (rx - vw, 28.0 * d);
+                    let vw = (measure(value, &Style { px: (12.5 * d).round() as i32, weight: 500 }).0 as f32 + 44.0 * d).max(96.0 * d);
+                    let (bx, bh) = (rx - vw, 26.0 * d);
                     let by = y + (rh - bh) / 2.0;
-                    self.rect(c, bx, by, vw, bh, 9.0 * d, col(look.fg, 30));
-                    self.text(c, value, bx + 12.0 * d, by + (bh - 16.0 * d) / 2.0 - 1.0, 12.5, 500, look.fg, 1.0, 0);
-                    self.text(c, "\u{2303}", bx + vw - 11.0 * d, by + (bh - 16.0 * d) / 2.0, 10.0, 600, look.fg, 0.6, 1);
+                    self.rect(c, bx, by, vw, bh, bh / 2.0, col(look.fg, 30));
+                    self.text(c, value, bx + 14.0 * d, by + (bh - 16.0 * d) / 2.0 - 1.0, 12.5, 500, look.fg, 1.0, 0);
+                    self.text(c, "\u{2303}", bx + vw - 14.0 * d, by + (bh - 16.0 * d) / 2.0, 10.0, 600, look.fg, 0.6, 1);
                     self.region(x0, y, cw, rh, *act);
                 }
             }
@@ -425,7 +637,7 @@ impl Win {
     fn page(&self, page: u8) -> Vec<(Option<&'static str>, Vec<RowDef>)> {
         let s = prefs::get();
         let behaviors = |dock: bool| -> Vec<(&'static str, Action)> {
-            [(prefs::tr("Tetap"), Behavior::Fixed), (prefs::tr("Menimpa"), Behavior::Overlay), (prefs::tr("Auto-hide"), Behavior::AutoHide), (prefs::tr("Sentuh tepi"), Behavior::Peek)]
+            [(prefs::tr("Tetap"), Behavior::Fixed), (prefs::tr("Menimpa"), Behavior::Overlay), (prefs::tr("Sembunyi otomatis"), Behavior::AutoHide), (prefs::tr("Saat tertimpa"), Behavior::Peek)]
                 .into_iter()
                 .map(|(t, b)| (t, if dock { Action::Dock(b) } else { Action::Notch(b) }))
                 .collect()
@@ -456,6 +668,10 @@ impl Win {
                         RowDef::Toggle(prefs::tr("Bayangan halus di bawah jendela aktif"), s.win_shadow, Action::WinShadow),
                     ],
                 ),
+                (
+                    Some(prefs::tr("Tentang")),
+                    vec![RowDef::Pick(prefs::tr("Dibuat oleh kreativa.dev"), prefs::tr("Belikan aku kopi").to_string(), Action::Donate)],
+                ),
             ],
             1 => vec![
                 (
@@ -463,6 +679,7 @@ impl Win {
                     vec![
                         RowDef::Toggle(prefs::tr("Aktifkan dock"), s.dock_enabled, Action::DockOn),
                         RowDef::Seg(prefs::tr("Perilaku"), behaviors(true), beh_idx(s.dock)),
+                        RowDef::Seg(prefs::tr("Efek minimize"), vec![(prefs::tr("Genie"), Action::MinEffect(0)), (prefs::tr("Skala"), Action::MinEffect(1))], s.min_effect as usize),
                         RowDef::Toggle(prefs::tr("Ikon seragam ala macOS (squircle)"), s.dock_plates, Action::DockPlates),
                         RowDef::Toggle(prefs::tr("Tumpukan Unduhan"), s.downloads_stack, Action::DownloadsStack),
                         RowDef::Toggle(prefs::tr("App terakhir dipakai"), s.recent_apps, Action::RecentApps),
@@ -487,9 +704,44 @@ impl Win {
                     RowDef::Slider(prefs::tr("Kebulatan sudut"), s.notch_round, 3),
                     RowDef::Toggle(prefs::tr("Buka otomatis saat kursor di notch"), s.notch_hover_open, Action::HoverOpen),
                 ],
+            ), (
+                Some(prefs::tr("Saat notch diam")),
+                {
+                    let name = if s.greet_name.is_empty() { user_name() } else { s.greet_name.as_str().to_string() };
+                    let hour = nacre_platform::time::local_now().hour;
+                    let auto = nacre_core::notch::glance::greeting_text("", &name, hour, s.lang);
+                    vec![
+                        RowDef::Seg(
+                            prefs::tr("Tampilkan"),
+                            vec![(prefs::tr("Sapaan & info"), Action::NotchIdle(0)), (prefs::tr("Musik & lirik"), Action::NotchIdle(2)), (prefs::tr("Kosong"), Action::NotchIdle(1))],
+                            match s.notch_idle {
+                                0 => 0,
+                                2 => 1,
+                                _ => 2,
+                            },
+                        ),
+                        RowDef::Text(prefs::tr("Nama panggilan"), s.greet_name.as_str().to_string(), user_name(), 0),
+                        RowDef::Text(prefs::tr("Teks sapaan"), s.greet_text.as_str().to_string(), auto, 1),
+                    ]
+                },
+            ), (
+                Some(prefs::tr("Lirik")),
+                vec![
+                    RowDef::Toggle(prefs::tr("Tampilkan lirik di notch"), s.lyrics_compact, Action::LyricsCompact),
+                    RowDef::Toggle(prefs::tr("Cari lirik online (LRCLIB)"), s.lyrics_online, Action::LyricsOnline),
+                    RowDef::Pick(prefs::tr("Folder lirik (.lrc)"), prefs::tr("Buka").to_string(), Action::LyricsDir),
+                ],
+            ), (
+                Some(prefs::tr("Aktivitas")),
+                vec![
+                    RowDef::Toggle(prefs::tr("Tampilkan unduhan (Store, Steam, peramban)"), s.notch_downloads, Action::NotchDownloads),
+                    RowDef::Toggle(prefs::tr("Kirim ke HP lewat QR (Wi-Fi yang sama)"), s.notch_send, Action::NotchSend),
+                ],
             )],
             3 => {
-                let cur = if !s.menubar_glass {
+                let cur = if s.menubar_material {
+                    3
+                } else if !s.menubar_glass {
                     0
                 } else {
                     match s.menubar_style {
@@ -503,7 +755,7 @@ impl Win {
                         RowDef::Toggle(prefs::tr("Aktifkan menu bar"), s.menubar, Action::MenuBarOn),
                         RowDef::Seg(
                             prefs::tr("Latar menu bar"),
-                            vec![(prefs::tr("Transparan"), Action::BarStyle(0)), (prefs::tr("Terang"), Action::BarStyle(1)), (prefs::tr("Gelap"), Action::BarStyle(2))],
+                            vec![(prefs::tr("Transparan"), Action::BarStyle(0)), (prefs::tr("Terang"), Action::BarStyle(1)), (prefs::tr("Gelap"), Action::BarStyle(2)), (prefs::tr("Material"), Action::BarStyle(3))],
                             cur,
                         ),
                         RowDef::Toggle(prefs::tr("Jam 24 jam"), s.clock_24h, Action::Clock24),
@@ -511,55 +763,75 @@ impl Win {
                 )]
             }
             4 => {
+                use nacre_core::settings::IconStyle;
                 let theme_idx = match s.theme {
                     Theme::Auto => 0,
                     Theme::Light => 1,
                     Theme::Dark => 2,
                 };
-                let blur_idx = match s.style {
-                    BlurStyle::Frosted => 0,
-                    BlurStyle::Clear => 1,
-                    BlurStyle::Vivid => 2,
-                };
+                let mat_idx = |m: Material| Material::ALL.iter().position(|x| *x == m).unwrap_or(0);
+                let mat_opts = |dock: bool| vec![(prefs::tr("Blur"), Action::Material(dock, Material::Blur)), (prefs::tr("Liquid Glass"), Action::Material(dock, Material::Glass)), (prefs::tr("Hitam buram"), Action::Material(dock, Material::Black))];
                 let ist = match s.icon_style {
-                    nacre_core::settings::IconStyle::Default => 0,
-                    nacre_core::settings::IconStyle::Dark => 1,
-                    nacre_core::settings::IconStyle::Clear => 2,
-                    nacre_core::settings::IconStyle::Tinted => 3,
+                    IconStyle::Default => 0,
+                    IconStyle::Dark => 1,
+                    IconStyle::Clear => 2,
+                    IconStyle::Tinted => 3,
                 };
-                let mut icons = vec![RowDef::Seg(
-                    prefs::tr("Gaya ikon"),
-                    vec![(prefs::tr("Bawaan"), Action::IconStyle(0)), (prefs::tr("Gelap"), Action::IconStyle(1)), (prefs::tr("Bening"), Action::IconStyle(2)), (prefs::tr("Berwarna"), Action::IconStyle(3))],
-                    ist,
-                )];
-                icons.push(RowDef::Toggle(prefs::tr("Paket ikon (folder iconpack)"), s.icon_pack, Action::IconPack));
-                if s.icon_style == nacre_core::settings::IconStyle::Tinted {
-                    icons.push(RowDef::Seg(
+                let accent_idx = if s.accent == nacre_core::settings::ACCENT_MULTI { 0 } else { s.accent as usize + 1 };
+                // Tema: warna aksen, gaya ikon & widget (+ Terang/Gelap/Otomatis), warna tint
+                let mut theme = vec![
+                    RowDef::Swatches(prefs::tr("Warna"), accent_idx),
+                    RowDef::Thumbs(
+                        prefs::tr("Gaya ikon & widget"),
+                        vec![
+                            (prefs::tr("Bawaan"), Thumb::Icon(IconStyle::Default), Action::IconStyle(0)),
+                            (prefs::tr("Gelap"), Thumb::Icon(IconStyle::Dark), Action::IconStyle(1)),
+                            (prefs::tr("Bening"), Thumb::Icon(IconStyle::Clear), Action::IconStyle(2)),
+                            (prefs::tr("Berwarna"), Thumb::Icon(IconStyle::Tinted), Action::IconStyle(3)),
+                        ],
+                        ist,
+                    ),
+                ];
+                if s.icon_style != IconStyle::Default {
+                    let v = match s.icon_variant {
+                        1 => 0,
+                        2 => 1,
+                        _ => 2,
+                    };
+                    theme.push(RowDef::Radios(vec![(prefs::tr("Terang"), Action::IconVariant(1)), (prefs::tr("Gelap"), Action::IconVariant(2)), (prefs::tr("Otomatis"), Action::IconVariant(0))], v));
+                }
+                if s.icon_style == IconStyle::Tinted {
+                    theme.push(RowDef::Seg(
                         prefs::tr("Warna tint"),
                         vec![(prefs::tr("Biru"), Action::IconTint(0)), (prefs::tr("Ungu"), Action::IconTint(1)), (prefs::tr("Merah Muda"), Action::IconTint(2)), (prefs::tr("Oranye"), Action::IconTint(3)), (prefs::tr("Hijau"), Action::IconTint(4))],
                         s.icon_tint as usize,
                     ));
                 }
+                theme.push(RowDef::Toggle(prefs::tr("Paket ikon (folder iconpack)"), s.icon_pack, Action::IconPack));
                 vec![
                     (
                         None,
-                        vec![
-                            RowDef::Seg(prefs::tr("Tema"), vec![(prefs::tr("Otomatis"), Action::Theme(Theme::Auto)), (prefs::tr("Terang"), Action::Theme(Theme::Light)), (prefs::tr("Gelap"), Action::Theme(Theme::Dark))], theme_idx),
-                            RowDef::Swatches(prefs::tr("Warna aksen"), s.accent as usize),
-                        ],
+                        vec![RowDef::Thumbs(
+                            prefs::tr("Tampilan"),
+                            vec![
+                                (prefs::tr("Otomatis"), Thumb::Appear(0), Action::Theme(Theme::Auto)),
+                                (prefs::tr("Terang"), Thumb::Appear(1), Action::Theme(Theme::Light)),
+                                (prefs::tr("Gelap"), Thumb::Appear(2), Action::Theme(Theme::Dark)),
+                            ],
+                            theme_idx,
+                        )],
                     ),
+                    (Some(prefs::tr("Tema")), theme),
                     (
                         Some(prefs::tr("Kaca")),
                         vec![
-                            RowDef::Seg(prefs::tr("Material"), vec![(prefs::tr("Liquid Glass"), Action::Material(true, Material::Glass)), (prefs::tr("Hitam buram"), Action::Material(true, Material::Black))], if s.dock_material == Material::Glass { 0 } else { 1 }),
-                            RowDef::Seg(prefs::tr("Material notch"), vec![(prefs::tr("Liquid Glass"), Action::Material(false, Material::Glass)), (prefs::tr("Hitam buram"), Action::Material(false, Material::Black))], if s.notch_material == Material::Glass { 0 } else { 1 }),
-                            RowDef::Seg(prefs::tr("Gaya blur"), vec![(prefs::tr("Buram"), Action::Style(BlurStyle::Frosted)), (prefs::tr("Bening"), Action::Style(BlurStyle::Clear)), (prefs::tr("Hidup"), Action::Style(BlurStyle::Vivid))], blur_idx),
+                            RowDef::Seg(prefs::tr("Material"), mat_opts(true), mat_idx(s.dock_material)),
+                            RowDef::Seg(prefs::tr("Material notch"), mat_opts(false), mat_idx(s.notch_material)),
                             RowDef::Slider(prefs::tr("Tingkat blur"), s.blur, 0),
                             RowDef::Slider(prefs::tr("Transparansi"), s.transparency, 1),
                             RowDef::Toggle(prefs::tr("Refraksi tepi kaca (dock)"), s.refraction, Action::Refraction),
                         ],
                     ),
-                    (Some(prefs::tr("Ikon")), icons),
                 ]
             }
             5 => vec![
@@ -607,13 +879,33 @@ impl Win {
         let look = prefs::look(Role::Themed);
         let c = &content;
 
-        // lampu jendela (hanya merah yang berfungsi; kuning/hijau abu-abu seperti jendela tak aktif)
+        // lampu jendela berwarna seperti macOS (merah menutup)
         for (i, rgb) in [[255u8, 95, 87], [254, 188, 46], [40, 200, 64]].iter().enumerate() {
             let (cx, cy) = ((22.0 + i as f32 * 20.0) * d, 24.0 * d);
-            let color = if i == 0 { col(*rgb, 255) } else { col(look.fg, 45) };
-            self.rect(c, cx - 6.0 * d, cy - 6.0 * d, 12.0 * d, 12.0 * d, 6.0 * d, color);
+            self.rect(c, cx - 6.0 * d, cy - 6.0 * d, 12.0 * d, 12.0 * d, 6.0 * d, col(*rgb, 255));
         }
         self.region_fixed(14.0 * d, 14.0 * d, 20.0 * d, 20.0 * d, Action::Close);
+
+        // kolom cari di sidebar
+        let (fx, fy, fw, fh) = (10.0 * d, 46.0 * d, (SIDEBAR_W - 20.0) * d, 30.0 * d);
+        self.rect(c, fx, fy, fw, fh, 9.0 * d, col(look.fg, if self.search_focus { 36 } else { 22 }));
+        self.glyph_icon(c, "\u{E721}", fx + 15.0 * d, fy + fh / 2.0, 11.0, look.fg);
+        let (shown, op) = if self.search.is_empty() && !self.search_focus {
+            (prefs::tr("Cari").to_string(), 0.45)
+        } else {
+            (format!("{}{}", self.search, if self.search_focus { "|" } else { "" }), 0.95)
+        };
+        self.text(c, &shown, fx + 29.0 * d, fy + (fh - 17.0 * d) / 2.0, 13.0, 400, look.fg, op, 0);
+        self.region_fixed(fx, fy, fw, fh, Action::Search);
+
+        // kartu profil (akun Windows)
+        let (px0, py0, av) = (14.0 * d, 88.0 * d, 38.0 * d);
+        self.rect(c, px0, py0, av, av, av / 2.0, crate::prefs::accent_c(255));
+        let user = user_name();
+        let initial: String = user.chars().take(1).collect::<String>().to_uppercase();
+        self.text(c, &initial, px0 + av / 2.0, py0 + (av - 20.0 * d) / 2.0, 15.0, 600, [255, 255, 255], 1.0, 1);
+        self.text(c, &user, px0 + av + 10.0 * d, py0 + 2.0 * d, 13.5, 600, look.fg, 0.95, 0);
+        self.text(c, prefs::tr("Akun Windows"), px0 + av + 10.0 * d, py0 + 20.0 * d, 11.0, 400, look.fg, 0.6, 0);
 
         // sidebar
         let pages: [(&'static str, &'static str, [u8; 3], u8); 8] = [
@@ -626,8 +918,11 @@ impl Win {
             (prefs::tr("Sudut Layar"), "\u{E73F}", [175, 82, 222], 6),
             (prefs::tr("Spotlight"), "\u{E721}", [255, 149, 10], 7),
         ];
-        let mut sy = 56.0 * d;
+        let mut sy = 140.0 * d;
         for (name, glyph, color, idx) in pages {
+            if !self.page_matches(idx, name) {
+                continue;
+            }
             let sel = idx == self.tab;
             let (rx, rw, rh) = (10.0 * d, (SIDEBAR_W - 20.0) * d, 36.0 * d);
             if sel {
@@ -639,11 +934,28 @@ impl Win {
             self.region_fixed(rx, sy, rw, rh, Action::Tab(idx));
             sy += 40.0 * d;
         }
+        // kaki sidebar: kredit pembuat + tombol donasi (Saweria), selalu terlihat
+        let (kx, kw) = (14.0 * d, (SIDEBAR_W - 28.0) * d);
+        let ky = (H - 78.0) * d;
+        self.text(c, prefs::tr("Dibuat oleh kreativa.dev"), kx + kw / 2.0, ky, 11.0, 500, look.fg, 0.55, 1);
+        let (kby, kbh) = (ky + 22.0 * d, 32.0 * d);
+        self.rect(c, kx, kby, kw, kbh, kbh / 2.0, col([255, 159, 10], 255));
+        self.text(c, prefs::tr("Belikan aku kopi"), kx + kw / 2.0, kby + (kbh - 17.0 * d) / 2.0, 13.0, 600, [255, 255, 255], 1.0, 1);
+        self.region_fixed(kx, kby, kw, kbh, Action::Donate);
         self.rect(c, SIDEBAR_W * d, 0.0, 1.0, H * d, 0.0, col(look.fg, 30));
 
-        // judul halaman
+        // tombol ◀ ▶ (riwayat halaman) lalu judul halaman, seperti bilah judul Pengaturan macOS
+        let (bx, by, bw, bh) = (CONTENT_X * d, 11.0 * d, 64.0 * d, 28.0 * d);
+        self.rect(c, bx, by, bw, bh, 14.0 * d, col(look.fg, 24));
+        let (can_back, can_fwd) = (self.hpos > 0, self.hpos + 1 < self.history.len());
+        let dim = |on: bool| if on { look.fg } else if look.dark { [110, 110, 116] } else { [170, 170, 176] };
+        self.glyph_icon(c, "\u{E76B}", bx + bw * 0.27, by + bh / 2.0, 11.0, dim(can_back));
+        self.glyph_icon(c, "\u{E76C}", bx + bw * 0.73, by + bh / 2.0, 11.0, dim(can_fwd));
+        self.rect(c, bx + bw / 2.0, by + 7.0 * d, 1.0, bh - 14.0 * d, 0.0, col(look.fg, 34));
+        self.region_fixed(bx, by, bw / 2.0, bh, Action::Back);
+        self.region_fixed(bx + bw / 2.0, by, bw / 2.0, bh, Action::Forward);
         let title = pages.iter().find(|p| p.3 == self.tab).map(|p| p.0).unwrap_or("");
-        self.text(c, title, CONTENT_X * d, 17.0 * d, 18.0, 700, look.fg, 1.0, 0);
+        self.text(c, title, bx + bw + 12.0 * d, by + (bh - 19.0 * d) / 2.0, 15.0, 700, look.fg, 1.0, 0);
 
         // isi (tergulir) di dalam viewport berklip
         let view = match (self.comp.CreateContainerVisual(), self.comp.CreateContainerVisual()) {
@@ -783,7 +1095,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             let (px, py) = ((lp.0 as i16) as i32, ((lp.0 >> 16) as i16) as i32);
             let drag = with_win(|w| {
                 let d = w.dpi;
-                py - r.top < (VIEW_TOP * d) as i32 && px - r.left > (SIDEBAR_W * d) as i32
+                py - r.top < (VIEW_TOP * d) as i32 && px - r.left > ((CONTENT_X + 70.0) * d) as i32
             })
             .unwrap_or(false);
             LRESULT(if drag { HTCAPTION } else { HTCLIENT } as isize)
@@ -830,6 +1142,69 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             });
             LRESULT(0)
         }
+        WM_CHAR => {
+            let ch = wp.0 as u32;
+            with_win(|w| {
+                if w.edit.is_some() {
+                    if ch >= 32 && ch != 127 && w.edit_buf.chars().count() < 60 {
+                        if let Some(c) = char::from_u32(ch) {
+                            w.edit_buf.push(c);
+                            w.render();
+                        }
+                    }
+                    return;
+                }
+                if w.search_focus && ch >= 32 && ch != 127 {
+                    if let Some(c) = char::from_u32(ch) {
+                        w.search.push(c);
+                        w.render();
+                    }
+                }
+            });
+            LRESULT(0)
+        }
+        WM_KEYDOWN => {
+            let vk = wp.0 as u16;
+            with_win(|w| {
+                if w.edit.is_some() {
+                    match vk {
+                        0x08 => {
+                            w.edit_buf.pop();
+                            w.render();
+                        }
+                        0x1B => {
+                            w.edit = None;
+                            w.render();
+                        }
+                        0x0D => w.commit_edit(),
+                        _ => {}
+                    }
+                    return;
+                }
+                if !w.search_focus {
+                    return;
+                }
+                match vk {
+                    0x08 => {
+                        w.search.pop();
+                    }
+                    0x1B => {
+                        w.search.clear();
+                        w.search_focus = false;
+                    }
+                    0x0D => {
+                        // Enter: buka halaman cocok pertama
+                        if let Some(t) = (0u8..8).find(|i| w.page_matches(*i, "")) {
+                            w.go(t, true);
+                            return;
+                        }
+                    }
+                    _ => return,
+                }
+                w.render();
+            });
+            LRESULT(0)
+        }
         WM_LBUTTONUP => {
             let (x, y) = xy(lp);
             let _ = ReleaseCapture();
@@ -846,14 +1221,85 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 w.hit(x, y)
             })
             .flatten();
+            if !matches!(act, Some(Action::Search)) {
+                with_win(|w| {
+                    if w.search_focus {
+                        w.search_focus = false;
+                        w.render();
+                    }
+                });
+            }
+            // klik di luar kolom yang sedang diketik = simpan
+            if !matches!(act, Some(Action::EditText(_))) {
+                with_win(|w| {
+                    if w.edit.is_some() {
+                        w.commit_edit();
+                    }
+                });
+            }
             match act {
+                Some(Action::EditText(f)) => {
+                    with_win(|w| {
+                        if w.edit != Some(f) {
+                            if w.edit.is_some() {
+                                w.commit_edit();
+                            }
+                            let s = prefs::get();
+                            w.edit_buf = if f == 0 { s.greet_name.as_str().to_string() } else { s.greet_text.as_str().to_string() };
+                            w.edit = Some(f);
+                            w.render();
+                        }
+                    });
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = SetFocus(Some(hwnd));
+                }
+                Some(Action::NotchIdle(v)) => prefs::update(|s| s.notch_idle = v),
+                Some(Action::LyricsCompact) => prefs::update(|s| s.lyrics_compact = !s.lyrics_compact),
+                Some(Action::NotchDownloads) => prefs::update(|s| s.notch_downloads = !s.notch_downloads),
+                Some(Action::NotchSend) => prefs::update(|s| s.notch_send = !s.notch_send),
+                Some(Action::LyricsOnline) => prefs::update(|s| s.lyrics_online = !s.lyrics_online),
+                // halaman donasi Saweria pembuat ABRA (dibuka di browser bawaan)
+                Some(Action::Donate) => nacre_platform::launch::open(DONATE_URL),
+                Some(Action::LyricsDir) => {
+                    let dir = crate::paths::config_dir().join("lyrics");
+                    let _ = std::fs::create_dir_all(&dir);
+                    nacre_platform::launch::open(&dir.to_string_lossy());
+                }
+                Some(Action::Search) => {
+                    with_win(|w| {
+                        w.search_focus = true;
+                        w.render();
+                    });
+                    // ambil fokus keyboard agar bisa mengetik di kolom cari
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = SetFocus(Some(hwnd));
+                }
+                Some(Action::Back) => {
+                    with_win(|w| {
+                        if w.hpos > 0 {
+                            w.hpos -= 1;
+                            let t = w.history[w.hpos];
+                            w.go(t, false);
+                        }
+                    });
+                }
+                Some(Action::Forward) => {
+                    with_win(|w| {
+                        if w.hpos + 1 < w.history.len() {
+                            w.hpos += 1;
+                            let t = w.history[w.hpos];
+                            w.go(t, false);
+                        }
+                    });
+                }
+                Some(Action::IconVariant(v)) => prefs::update(|s| s.icon_variant = v),
+                Some(Action::MinEffect(v)) => prefs::update(|s| s.min_effect = v),
                 Some(Action::Close) => {
                     let _ = PostMessageW(Some(hwnd), WM_CLOSE_SELF, WPARAM(0), LPARAM(0));
                 }
                 Some(Action::Takeover) => prefs::update(|s| s.takeover = !s.takeover),
                 Some(Action::Dock(b)) => prefs::update(|s| s.dock = b),
                 Some(Action::Notch(b)) => prefs::update(|s| s.notch = b),
-                Some(Action::Style(b)) => prefs::update(|s| s.style = b),
                 Some(Action::Theme(t)) => prefs::update(|s| s.theme = t),
                 Some(Action::Lang(l)) => prefs::update(|s| s.lang = l),
                 Some(Action::WinShadow) => prefs::update(|s| s.win_shadow = !s.win_shadow),
@@ -888,12 +1334,21 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 Some(Action::RecentApps) => prefs::update(|s| s.recent_apps = !s.recent_apps),
                 Some(Action::HideIcons) => prefs::update(|s| s.hide_desktop_icons = !s.hide_desktop_icons),
                 Some(Action::BarStyle(m)) => prefs::update(|s| match m {
-                    0 => s.menubar_glass = false,
+                    0 => {
+                        s.menubar_glass = false;
+                        s.menubar_material = false;
+                    }
+                    3 => {
+                        s.menubar_glass = false;
+                        s.menubar_material = true;
+                    }
                     1 => {
+                        s.menubar_material = false;
                         s.menubar_glass = true;
                         s.menubar_style = nacre_core::settings::BarStyle::Light;
                     }
                     _ => {
+                        s.menubar_material = false;
                         s.menubar_glass = true;
                         s.menubar_style = nacre_core::settings::BarStyle::Dark;
                     }
@@ -908,11 +1363,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 Some(Action::Material(true, m)) => prefs::update(|s| s.dock_material = m),
                 Some(Action::Material(false, m)) => prefs::update(|s| s.notch_material = m),
                 Some(Action::Tab(t)) => {
-                    with_win(|w| {
-                        w.tab = t;
-                        w.scroll = 0.0;
-                        w.render();
-                    });
+                    with_win(|w| w.go(t, true));
                 }
                 _ => {}
             }

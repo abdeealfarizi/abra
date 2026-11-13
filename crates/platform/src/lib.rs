@@ -1,11 +1,14 @@
 //! Lapisan Win32: semua `unsafe` hidup di sini, dibungkus API kecil yang aman.
 
+pub mod agenda;
 pub mod apps;
 pub mod audio;
+pub mod bt;
 pub mod brightness;
 pub mod clipboard;
 pub mod cursors;
 pub mod desktopicons;
+pub mod dlwatch;
 pub mod downloads;
 pub mod filesearch;
 pub mod iconpack;
@@ -14,15 +17,20 @@ pub mod input;
 pub mod keys;
 pub mod launch;
 pub mod loopback;
+pub mod lyrics;
 pub mod media;
 pub mod menus;
 pub mod media_fake;
 pub mod log;
 pub mod osd;
 pub mod pick;
+pub mod privacy;
 pub mod process;
+pub mod recent;
+pub mod recycle;
 pub mod radio;
 pub mod shell;
+pub mod sendsrv;
 pub mod startup;
 pub mod sys;
 pub mod text;

@@ -8,10 +8,11 @@ mod hud;
 mod prefs;
 mod settings_win;
 mod services;
-mod island;
+mod notch;
 mod hotcorners;
 mod launchpad;
 mod menubar;
+mod netmenu;
 mod mission;
 mod motion;
 mod spotlight;
@@ -169,12 +170,12 @@ fn main() {
     }
 
     if !args.no_island {
-        if let Err(e) = island::Island::create(&host, island::Options {
+        if let Err(e) = notch::Notch::create(&host, notch::Options {
                 glass: args.glass,
                 mode: args.island_mode.unwrap_or(pref.notch.mode()),
                 reserve: args.island_mode.is_none() && pref.notch.reserves(),
             }) {
-            log::line("island", &format!("gagal dibuat: {e}"));
+            log::line("notch", &format!("gagal dibuat: {e}"));
         }
     }
 

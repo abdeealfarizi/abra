@@ -165,9 +165,15 @@ pub const TINTS: [[u8; 3]; 5] = [[10, 132, 255], [175, 82, 222], [255, 55, 95], 
 /// Terapkan gaya ikon Tahoe pada ikon BGRA ter-premultiply (`Default` mengembalikan salinan apa adanya).
 /// Dark: latar digelapkan; Clear: abu-abu bening berkilau; Tinted: warna ikon dipetakan ke satu warna tint.
 pub fn style_icon(bgra: &[u8], style: crate::settings::IconStyle, tint_index: u8) -> Vec<u8> {
+    style_icon_v(bgra, style, tint_index, true)
+}
+
+/// Seperti `style_icon` dengan varian Terang/Gelap (Tahoe: radio Light · Dark · Auto di bawah gaya ikon).
+/// Varian terang: Gelap = ikon biasa, Bening = kaca putih susu, Berwarna = tint di atas dasar terang.
+pub fn style_icon_v(bgra: &[u8], style: crate::settings::IconStyle, tint_index: u8, dark: bool) -> Vec<u8> {
     use crate::settings::IconStyle;
     let mut out = bgra.to_vec();
-    if style == IconStyle::Default {
+    if style == IconStyle::Default || (style == IconStyle::Dark && !dark) {
         return out;
     }
     let tint = TINTS[(tint_index as usize).min(TINTS.len() - 1)];
@@ -184,9 +190,19 @@ pub fn style_icon(bgra: &[u8], style: crate::settings::IconStyle, tint_index: u8
                 let (sr, sg, sb) = (r * 0.75 + lum * 0.25, g * 0.75 + lum * 0.25, b * 0.75 + lum * 0.25);
                 (sr * 0.38 + 8.0, sg * 0.38 + 8.0, sb * 0.40 + 14.0, a as f32)
             }
+            IconStyle::Clear if !dark => {
+                let v = lum * 0.40 + 150.0;
+                (v, v + 2.0, v + 6.0, a as f32 * 0.78)
+            }
             IconStyle::Clear => {
                 let v = lum * 0.55 + 95.0;
                 (v, v, v + 8.0, a as f32 * 0.82)
+            }
+            _ if !dark => {
+                let f = lum / 255.0;
+                let base = 0.45 + 0.5 * f;
+                let hi = ((f - 0.55).max(0.0) * 1.4) * 255.0;
+                (tint[0] as f32 * base + hi + 30.0, tint[1] as f32 * base + hi + 30.0, tint[2] as f32 * base + hi + 30.0, a as f32)
             }
             _ => {
                 let f = lum / 255.0;
@@ -335,6 +351,10 @@ mod style_tests {
         let p = &t[4..8]; // B, G, R, A
         assert!(p[0] > p[2] && p[0] > p[1], "biru dominan: {p:?}");
         let pink = style_icon(&src, IconStyle::Tinted, 2);
+        // varian terang: Bening lebih terang daripada Bening gelap; Gelap+terang = ikon asli
+        let lum = |b: &[u8]| b.chunks_exact(4).map(|p| p[0] as u32 + p[1] as u32 + p[2] as u32).sum::<u32>();
+        assert!(lum(&style_icon_v(&src, IconStyle::Clear, 0, false)) > lum(&style_icon(&src, IconStyle::Clear, 0)));
+        assert_eq!(style_icon_v(&src, IconStyle::Dark, 0, false), src);
         let q = &pink[4..8];
         assert!(q[2] > q[0], "merah muda: R > B: {q:?}");
     }

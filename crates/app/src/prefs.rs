@@ -128,12 +128,39 @@ pub fn glass(size: (f32, f32), radius: f32, role: Role) -> GlassParams {
 
 /// Terjemahkan teks sumber (Indonesia) ke bahasa pilihan.
 pub fn tr(src: &'static str) -> &'static str {
-    nacre_core::i18n::tr(get().lang, src)
+    let lang = get().lang;
+    if lang == nacre_core::i18n::Lang::En && !nacre_core::i18n::is_known(src) {
+        note_missing(src);
+    }
+    nacre_core::i18n::tr(lang, src)
+}
+
+/// Catat sekali ke log teks yang belum punya terjemahan Inggris (agar tidak ada teks Indonesia yang bocor).
+fn note_missing(src: &'static str) {
+    static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut g = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if !g.contains(&src) && g.len() < 400 {
+        g.push(src);
+        nacre_platform::log::line("i18n", &format!("belum diterjemahkan: {src:?}"));
+    }
 }
 
 /// Warna aksen sistem terpilih (RGB).
 pub fn accent() -> [u8; 3] {
-    settings::ACCENTS[(get().accent as usize).min(settings::ACCENTS.len() - 1)]
+    let a = get().accent;
+    if a == settings::ACCENT_MULTI {
+        return nacre_platform::sys::accent_color().unwrap_or(settings::ACCENTS[0]);
+    }
+    settings::ACCENTS[(a as usize).min(settings::ACCENTS.len() - 1)]
+}
+
+/// Apakah gaya ikon memakai varian gelap: Terang/Gelap dipaksa, Otomatis mengikuti tema.
+pub fn icon_dark() -> bool {
+    match get().icon_variant {
+        1 => false,
+        2 => true,
+        _ => look(Role::Themed).dark,
+    }
 }
 
 /// Warna aksen dengan alfa `a`.

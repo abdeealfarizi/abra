@@ -11,7 +11,7 @@ dan ringan.
 
 1. [Memasang dan memulai](#1-memasang-dan-memulai)
 2. [Dock](#2-dock)
-3. [Notch (Island)](#3-notch-island)
+3. [Notch](#3-notch)
 4. [Menu bar](#4-menu-bar)
 5. [Pusat Kontrol](#5-pusat-kontrol)
 6. [Spotlight](#6-spotlight)
@@ -68,20 +68,95 @@ hanya disembunyikan selama ABRA berjalan (bisa dimatikan di Pengaturan → Umum 
 - **Tumpukan Unduhan** (sebelum tempat sampah): klik untuk melihat 10 berkas terbaru di folder Unduhan dan membukanya, atau pilih "Buka folder Unduhan". Berkas yang masih diunduh disembunyikan. Bisa dimatikan di Pengaturan → Dock.
 - **App terakhir dipakai:** tiga app yang baru saja Anda tutup (bukan sematan) tetap muncul di akhir daftar app agar mudah dibuka lagi; daftarnya disimpan di `recents.txt`. Bisa dimatikan di Pengaturan → Dock.
 - **Tooltip** nama ikon berekor kecil yang menunjuk ke ikon.
-- **Tempat sampah** ada di ujung kanan dock; klik kanan untuk membuka atau mengosongkannya (Windows tetap meminta konfirmasi).
-- **Mode dock** (tetap, menimpa, sembunyi otomatis, sentuh tepi) ada di halaman **Dock**. Material permukaan (Liquid Glass atau Hitam buram) dan tema terang/gelap diatur sekali untuk semua permukaan di halaman **Tampilan**.
-- Animasi minimize, buka, dan tutup jendela dapat dimatikan di Pengaturan → Umum; bayangan jendela aktif di Pengaturan → Jendela.
+- **Tempat sampah** ada di ujung kanan dock dengan ikon kaca gaya Tahoe: kosong, atau berisi gumpalan kertas bila Recycle Bin ada isinya (diperbarui tiap beberapa detik). Klik kanan untuk membuka atau mengosongkannya (Windows tetap meminta konfirmasi). Bila pack ikonmu punya ikon tempat sampah, ikon pack yang dipakai.
+- **Mode dock** (tetap, menimpa, sembunyi otomatis, sentuh tepi) ada di halaman **Dock**. Material permukaan (Blur, Liquid Glass, atau Hitam buram) dan tema terang/gelap diatur sekali untuk semua permukaan di halaman **Tampilan**.
+- **Efek minimize** (Pengaturan → Dock): **Genie** (bawaan; jendela mengalir seperti corong ke ikonnya di dock dan keluar lagi saat ikon diklik) atau **Skala** (mengecil lurus ke ikon, lebih singkat). Animasi minimize, buka, dan tutup jendela dapat dimatikan di Pengaturan → Umum; bayangan jendela aktif di Pengaturan → Jendela.
 
 **Gaya ikon:** Pengaturan → Tampilan → *Gaya ikon* mengubah semua ikon dock, tombol Apps, dan grid Apps: **Gelap** menggelapkan latar ikon, **Bening** membuatnya abu-abu kaca tembus pandang, **Berwarna** memetakan warna ikon ke satu warna tint (Biru, Ungu, Merah Muda, Oranye, Hijau). Ikon yang Anda ganti sendiri tidak ikut berubah.
 
-## 3. Notch (Island)
+## 3. Notch
 
-Pil di tengah atas layar. Materialnya (**Liquid Glass** atau **Hitam buram**, bawaan Hitam) dipilih sendiri lewat *Material notch* di Pengaturan → Tampilan, terpisah dari dock dan menu bar; teksnya selalu putih sehingga notch memakai varian gelap. Ia melebar saat kursor menempel (jika **Buka otomatis saat kursor di notch** aktif) atau saat diklik.
-Isinya: media yang sedang diputar (sampul, judul, kontrol, dan visualizer), kalender, timer, dan kontrol cepat (Wi-Fi, Bluetooth,
-volume, kecerahan). Saat panel terbuka, gulir mouse di atasnya untuk berpindah panel.
+Pil kecil di tengah atas layar dengan bayangan tipis di bawahnya. Materialnya (**Blur**, **Liquid Glass**, atau **Hitam**)
+dipilih lewat *Material notch* di Pengaturan → Tampilan; teksnya selalu putih.
 
-Saat menu bar aktif, notch dibiarkan hitam polos seperti MacBook, kecuali ada media yang diputar. Mode dan kebulatannya
-diatur di tab **NOTCH**; bisa dimatikan di Pengaturan → Umum → **Aktifkan notch**.
+**Saat diam** notch menampilkan **sapaan & info** yang berganti pelan tiap ±9 detik: sapaan ("Selamat malam, Rani",
+hanya tulisan di tengah), jam, tanggal, dan baterai (ikon di kiri, nilai di kanan). Di Pengaturan → Notch → *Saat notch
+diam* → **Tampilkan** ada tiga pilihan: **Sapaan & info**, **Musik & lirik**, dan **Kosong**; di sana juga **Nama
+panggilan** dan **Teks sapaan**.
+
+**Musik & lirik:** selama ada lagu (diputar maupun dijeda), notch diam melebar dan sedikit turun: sampul kecil dengan
+ikon app pemutarnya (Spotify, browser, Media Player…) di sudutnya, tombol **mundur · putar/jeda · maju** di bawah sampul,
+dan lirik di kanan dengan gaya yang sama seperti tab Putar (baris aktif tebal, baris lain redup dan buram, bergulir naik).
+Tombolnya bisa langsung diklik; diam di atas tombol tidak membuka panel. Diam atau klik di bagian lain membuka panel
+seperti biasa. Lagu tanpa lirik tersinkron menampilkan judul dan artis.
+
+**Aktivitas** yang sedang berlangsung menggantikan sapaan, dari yang paling penting: berkas sedang diseret ke notch → timer
+yang tinggal di bawah 1 menit → unduhan → lirik → lagu (sampul + visualizer berwarna sampul) → baterai baru mulai diisi → timer
+berjalan → jumlah berkas di Rak. Titik **oranye** (mikrofon) atau **hijau** (kamera) kecil muncul di tepi kanan bila ada
+app yang sedang memakainya.
+
+**Membuka panel:** diamkan kursor di notch ±0,3 detik (atau klik, bila *Buka otomatis saat kursor di notch* dimatikan).
+Panel menutup sendiri sesaat setelah kursor keluar. Panel punya tiga tab (klik, atau gulir mouse untuk berpindah):
+
+- **Putar**: kartu lagu (sampul, judul, artis, penggeser posisi yang bisa diseret, mundur · putar/jeda · maju) dan
+  **lirik besar**: baris yang sedang dinyanyikan tebal dan terang, baris sebelum/sesudahnya redup dan sedikit buram, dan
+  isinya bergulir naik saat baris berganti.
+- **Rak**: berkas yang Anda taruh di notch. Klik untuk membuka; klik kanan untuk *Tampilkan di folder*, *Salin jalur*,
+  atau *Hapus dari Rak*; **Kosongkan** menghapus semuanya dari Rak. Rak hanya menyimpan **jalur** berkas (isinya tidak
+  disalin) dan kosong lagi saat ABRA ditutup.
+- **Timer**: dua kotak. Kiri: timer (−5 menit · mulai/jeda · ulang · +5 menit). Kanan: **kalender** horizontal: bulan,
+  lima tanggal di sekitar tanggal terpilih (hari ini berwarna aksen), dan acara tanggal itu dari Kalender Windows
+  ("Tidak ada acara hari ini" bila kosong). Klik tanggal untuk melihat acaranya; kalender kembali ke hari ini saat panel
+  ditutup.
+
+Di kanan atas panel ada baterai dan tombol Pengaturan ABRA.
+
+**Menyeret berkas ke notch:** saat berkas dari Explorer diseret ke notch, muncul empat zona: **Simpan ke Rak**,
+**Kirim** (ke HP, lihat di bawah), **Salin ke…** (pilih folder, lalu disalin dengan jendela salin Windows), dan **Buka
+dengan…** (dialog "Buka dengan" Windows untuk berkas pertama).
+
+### Kirim ke HP
+
+Taruh berkas di zona **Kirim** (atau klik kanan berkas di Rak → **Kirim ke HP**). Tab Rak menampilkan **kode QR**.
+Arahkan kamera HP (Android atau iPhone, tanpa aplikasi tambahan) ke QR itu, buka tautannya, lalu ketuk **Unduh** di
+halaman yang muncul. Kemajuan tampil di kartu dan di notch tertutup (busur hijau dengan panah ke atas), lalu
+"Terkirim ✓".
+
+- Laptop dan HP harus tersambung ke **Wi-Fi/jaringan yang sama**.
+- Saat pertama dipakai, Windows Firewall bisa menanyakan izin untuk ABRA: pilih **Jaringan pribadi** agar HP bisa
+  mengunduh.
+- Sesi berakhir saat **Selesai** diklik, setelah 15 menit tanpa aktivitas, atau saat ABRA ditutup.
+- Matikan zona ini lewat Pengaturan → Notch → Aktivitas → "Kirim ke HP lewat QR (Wi-Fi yang sama)".
+
+Perilaku (tetap, menimpa, sembunyi otomatis, saat tertimpa) dan kebulatan sudut diatur di Pengaturan → Notch; notch bisa
+dimatikan dengan **Aktifkan notch**.
+
+### Unduhan di notch
+
+Saat ada unduhan berjalan, notch tertutup sedikit memanjang: **ikon app pengunduh** di kiri (Microsoft Store, Steam, atau
+browser yang mengunduh, mis. Brave), dan di kanan **busur hijau** yang terisi searah jarum jam dari ±jam 8 sampai ±jam 4
+dengan panah unduh di tengahnya. Angka di bawahnya adalah **persen** (tanpa tanda %).
+
+- **Microsoft Store** dan **Steam** memberi persen yang sebenarnya.
+- **Browser** tidak memberi tahu ukuran total, jadi busurnya **berputar** dan angkanya menunjukkan ukuran yang sudah
+  terunduh (mis. `26M`). ABRA mengenali berkas sementara `.crdownload` / `.part` di folder Unduhan.
+- Saat selesai, busur penuh dengan tanda centang tampil ±3 detik.
+
+Matikan lewat Pengaturan → Notch → Aktivitas → "Tampilkan unduhan (Store, Steam, peramban)".
+
+### Lirik di notch
+
+Saat lagu diputar dan liriknya tersedia, notch tertutup menampilkan **baris lirik yang sedang dinyanyikan** di tengah, di
+antara sampul (kiri) dan visualizer (kanan); barisnya berganti mengikuti posisi lagu. Tab **Putar** di notch terbuka
+menampilkan lirik besar seperti di atas.
+
+Sumber lirik, berurutan:
+1. **Berkas `.lrc` Anda sendiri** di `%APPDATA%\ABRA\lyrics`, bernama `Artis - Judul.lrc` atau `Judul.lrc` (huruf besar/kecil
+   tidak berpengaruh). Buka foldernya lewat Pengaturan → Notch → Lirik → "Folder lirik (.lrc)".
+2. **Cache** hasil pencarian sebelumnya.
+3. **LRCLIB online** (bila diizinkan, aktif bawaan). Lagu yang tidak ditemukan dicoba lagi setelah 3 hari.
+
+Lirik tanpa cap waktu hanya tampil di kartu Lirik. Baris lirik di notch tertutup bisa dimatikan lewat "Tampilkan lirik di notch".
 
 ## 4. Menu bar
 
@@ -98,7 +173,17 @@ Aktifkan di Pengaturan → Umum → **Aktifkan menu bar**.
 **Sisi kanan** (dari kanan ke kiri): jam (klik membuka Pusat Notifikasi Windows), **Pusat Kontrol**, **Spotlight**, Wi-Fi, baterai
 (klik membuka pengaturan Windows terkait). Ada ikon Stage Manager saat fiturnya aktif.
 
-**Latar menu bar** (Pengaturan → Menu Bar): **Transparan** (bawaan, tanpa latar), **Terang** (putih rata), atau **Gelap** (hitam rata).
+**Menu Wi-Fi:** klik ikon Wi-Fi untuk membuka menu ala macOS: sakelar Wi-Fi, **Jaringan Dikenal** (lingkaran biru = tersambung,
+ikon sinyal, gembok untuk jaringan bersandi), **Jaringan Lain** yang bisa dibuka, dan **Pengaturan Wi-Fi…**. Klik jaringan
+dikenal atau jaringan terbuka untuk langsung menyambung; jaringan bersandi yang baru membuka daftar jaringan Windows agar
+Anda bisa memasukkan sandinya.
+
+> Sejak Windows 11 24H2, Windows hanya memberikan daftar jaringan sekitar kepada aplikasi desktop bila **Lokasi** aktif
+> (Pengaturan Windows → Privasi & keamanan → Lokasi, termasuk "Izinkan aplikasi desktop mengakses lokasi"). Bila Lokasi mati,
+> menu tetap berfungsi dalam mode terbatas: status tersambung, tombol **Nyalakan Lokasi…**, dan **Jaringan Lain…** (daftar
+> jaringan Windows). ABRA tidak membaca atau menyimpan lokasi Anda.
+
+**Latar menu bar** (Pengaturan → Menu Bar): **Transparan** (bawaan, tanpa latar), **Terang** (putih rata), **Gelap** (hitam rata), atau **Material** (strip yang memakai material global, mis. Blur: kabut tebal seperti Tahoe; teksnya mengikuti tema).
 Warna teks menyesuaikan wallpaper atau warna latar. Tema terang/gelap tidak mengubah menu bar.
 
 **Nama app di kiri** mengikuti jendela yang terakhir Anda klik dengan mouse (juga saat jendela itu tidak berpindah fokus), dan jendela
@@ -109,7 +194,15 @@ mereka menyingkir saat layar penuh (video, game, F11), matikan Pengaturan → Um
 
 ## 5. Pusat Kontrol
 
-Klik ikon dua sakelar di menu bar. Panel berisi modul kaca mengambang: Wi-Fi (dengan nama jaringan), Bluetooth, Berbagi Terdekat (padanan AirDrop), Sedang Diputar, Stage Manager, Mission Control, Mode Gelap, Tangkapan Layar, Fokus, serta slider **Suara** dan **Layar** (kecerahan). Klik modul untuk menyalakan/mematikan; seret slider untuk mengubah nilai, dan kenop kaca bening muncul selama diseret. Tombol bulat di ujung kanan slider membuka pengaturan suara atau layar Windows.
+Klik ikon dua sakelar di menu bar. Panel berisi modul kaca mengambang: Wi-Fi (dengan nama jaringan), Bluetooth, Berbagi Terdekat (padanan AirDrop), Sedang Diputar, Stage Manager, Mission Control, Mode Gelap, Tangkapan Layar, Fokus, serta slider **Suara** dan **Layar** (kecerahan). Klik modul untuk menyalakan/mematikan; seret slider untuk mengubah nilai. Pada modul **Wi-Fi** dan **Bluetooth**, klik
+lingkaran ikonnya untuk menyalakan/mematikan, dan klik bagian lain modul (atau klik kanan modul bulat kecil) untuk membuka
+**pemilih jaringan / perangkat**: Control Center menutup, lalu jendela Wi-Fi/Bluetooth muncul di pojok kanan atas dengan
+animasi yang sama seperti Control Center (sudutnya sebesar kartu slider Suara/Layar). Menu Bluetooth menampilkan perangkat yang sudah
+dipasangkan (lingkaran biru = tersambung). Klik **headphone atau speaker** untuk langsung menyambung/memutusnya (label
+"Menyambung…" / "Memutus…" tampil sampai selesai, menu tetap terbuka). Perangkat lain (keyboard, mouse, ponsel) membuka
+Pengaturan Bluetooth Windows, karena Windows hanya menyediakan cara sambung langsung untuk perangkat audio. Kenop slider berupa pil putih; selama diseret ia berubah jadi kaca bening dan sedikit membesar ("tetes air" Tahoe), sama seperti slider di notch. Tombol bulat di kanan modul **Suara** membuka pemilih keluaran suara Windows (speaker/headphone, sama dengan Win+Ctrl+V).
+
+Bila ada app yang sedang memakai **mikrofon** (titik oranye) atau **kamera** (titik hijau), namanya tampil sebagai chip kecil di atas modul. Klik chip untuk membuka pengaturan privasi mikrofon/kamera Windows. ABRA hanya membaca catatan pemakaian milik Windows; ia tidak mengakses mikrofon atau kamera.
 
 **Edit Kontrol…** membuka mode edit dan galeri **Cari Kontrol**:
 - badge **−** menghapus modul; seret modul ke modul lain untuk menukar urutan; **Selesai** menyimpan.
@@ -117,11 +210,11 @@ Klik ikon dua sakelar di menu bar. Panel berisi modul kaca mengambang: Wi-Fi (de
 - **Klik kanan** modul (di mode edit) untuk mengubah ukuran: **Kecil** (bulat), **Sedang** (kapsul), atau **Besar** (2×2). Slider dan Sedang Diputar berukuran tetap.
 - Fokus, Hotspot, Berbagi Terdekat, dan Mode Pesawat membuka halaman pengaturan Windows yang sesuai.
 
-**HUD volume dan kecerahan:** saat Anda menekan tombol volume/kecerahan, kapsul kaca muncul di kanan atas (di bawah menu bar) berisi slider dengan ikon di kedua ujung; bisa diseret dan hilang sendiri.
+**HUD volume dan kecerahan:** saat Anda menekan tombol volume/kecerahan, kapsul kaca muncul di kanan atas (di bawah menu bar). Judulnya nama perangkat keluaran yang sedang dipakai (mis. "Headphones") atau "Layar" untuk kecerahan, di bawahnya slider tipis dengan ikon di kedua ujung dan 16 titik skala. Bisa diseret dan hilang sendiri.
 
 ## 6. Spotlight
 
-`Ctrl+Space` atau ikon kaca pembesar di menu bar. Saat kosong, Spotlight tampil sebagai kapsul "Spotlight Search" dengan empat tombol bulat di kanan. Begitu Anda mengetik, ia berubah menjadi panel hasil.
+`Ctrl+Space` atau ikon kaca pembesar di menu bar. Spotlight muncul memudar sebagai kapsul "Spotlight Search". Arahkan kursor ke atasnya: kapsul memendek dan empat tombol bulat muncul di kanan (Apps, Berkas, Aksi, Papan Klip); menunjuk sebuah tombol menampilkan nama mode dan pintasannya di kapsul. Memilih mode membuat kapsul melebar menelan tombol, lalu panel tumbuh ke bawah dan isinya memudar masuk. Begitu Anda mengetik, kapsul berubah menjadi panel hasil.
 
 **Mencari:** ketik nama aplikasi (fuzzy, inisial didukung), ekspresi hitung seperti `12*(3+4)`, nama berkas, atau nama aksi. Hasil dikelompokkan: kalkulator, aplikasi, aksi, berkas, lalu baris **Cari di web**. Chip **Aplikasi / Berkas Saya / Aksi** di bawah kolom input menyaring jenis hasil. Panah atas/bawah memilih, `Enter` membuka, `Esc` membersihkan input lalu menutup. Baris web membuka Google di browser Anda **hanya bila dipilih**; ABRA sendiri tidak mengirim apa pun lewat jaringan.
 
@@ -129,10 +222,10 @@ Klik ikon dua sakelar di menu bar. Panel berisi modul kaca mengambang: Wi-Fi (de
 
 | Pintasan | Mode | Isi |
 |---|---|---|
-| `Ctrl+1` | **Apps** | Semua aplikasi terpasang (lihat bagian 7) |
-| `Ctrl+2` | **Berkas Saya** | Mencari nama berkas dan folder di Desktop, Dokumen, Unduhan, Gambar, Video, Musik, dan OneDrive (sampai 5 tingkat, hasil teratas 20). Bukan pencarian seluruh disk |
+| `Ctrl+1` | **Apps** | Seksi **Saran** (app di dock) lalu per kategori, masing-masing satu baris dengan **Lihat Semua**; ketik untuk mencari (lihat bagian 7) |
+| `Ctrl+2` | **Berkas Saya** | Tanpa kata kunci: **Terbaru** (berkas yang baru Anda buka di Windows, dengan thumbnail). Chip **Gambar, Video, Dokumen, Musik** menyaring jenisnya. Dengan kata kunci: mencari nama berkas dan folder di Desktop, Dokumen, Unduhan, Gambar, Video, Musik, dan OneDrive (sampai 5 tingkat, hasil teratas 20). Bukan pencarian seluruh disk |
 | `Ctrl+3` | **Aksi** | Perintah cepat: Buat Catatan, Mulai Timer, Kirim Email, Ambil Tangkapan Layar, Kunci Layar, Tampilkan Desktop, Ganti Mode Gelap, Stage Manager, Mission Control, Kalkulator, Task Manager, Pengaturan, Hapus Riwayat Papan Klip |
-| `Ctrl+4` | **Papan Klip** | Teks yang Anda salin dalam 8 jam terakhir, lengkap dengan jamnya. `Enter` menyalinnya kembali ke papan klip |
+| `Ctrl+4` | **Papan Klip** | Teks yang Anda salin dalam 8 jam terakhir ("teks · Disalin 15.20"). `Enter` atau tombol salin bulat menyalinnya kembali; tombol **⋯** → Hapus Riwayat |
 
 **Quick keys untuk Aksi:** tiap aksi bisa dijalankan dengan huruf singkat. Di mode Aksi, ketik `nn` lalu `Enter` untuk Buat Catatan. Pilih sebuah aksi lalu tekan `Tab` untuk mengisi atau mengganti quick key-nya (sampai 6 huruf/angka), `Enter` menyimpan, `Esc` membatalkan. Tersimpan di `actions.txt` pada folder konfigurasi.
 
@@ -189,15 +282,15 @@ diabaikan saat tombol mouse ditekan, jadi aman saat menyeret jendela.
 
 ## 11. Pengaturan
 
-Jendela Pengaturan ABRA meniru Pengaturan Sistem macOS Tahoe: sidebar berikon warna di kiri dan halaman berisi kartu grup di kanan (gulir dengan roda mouse bila isinya panjang). Lampu merah di kiri atas menutup jendela; judul bisa diseret.
+Jendela Pengaturan ABRA meniru Pengaturan Sistem macOS Tahoe: sidebar berikon warna di kiri dan halaman berisi kartu grup di kanan (gulir dengan roda mouse bila isinya panjang). Lampu merah di kiri atas menutup jendela; judul bisa diseret. Di sidebar ada kolom **Cari** (ketik untuk menyaring halaman; `Enter` membuka yang pertama, `Esc` menghapus) dan kartu akun Windows; tombol **◀ ▶** di bilah judul kembali/maju antar halaman yang sudah dibuka.
 
 | Halaman | Isi |
 |---|---|
 | **Umum** | Bahasa (Indonesia/English), jalankan saat login, sembunyikan taskbar Windows, sembunyikan ikon desktop, selalu di atas jendela layar penuh, animasi jendela, bayangan jendela aktif |
 | **Dock** | Aktifkan dock, perilaku, ikon seragam ala macOS, ukuran ikon, jarak, zoom, jarak dari tepi, kebulatan sudut |
 | **Notch** | Aktifkan notch, perilaku, kebulatan sudut, buka otomatis saat kursor di notch |
-| **Menu Bar** | Aktifkan menu bar, latar (Transparan, Terang, Gelap), jam 24 jam |
-| **Tampilan** | Tema, **material** (Liquid Glass atau Hitam buram, berlaku global), gaya blur, tingkat blur, transparansi, refraksi tepi kaca, gaya ikon (Bawaan, Gelap, Bening, Berwarna) dan warna tint, paket ikon |
+| **Menu Bar** | Aktifkan menu bar, latar (Transparan, Terang, Gelap, Material), jam 24 jam |
+| **Tampilan** | Kartu pratinjau **Otomatis · Terang · Gelap**; **Tema**: warna aksen (Multiwarna = ikut warna aksen Windows, lalu 8 warna), kartu **gaya ikon & widget** Bawaan · Gelap · Bening · Berwarna dengan pilihan Terang · Gelap · Otomatis, warna tint, paket ikon; **Kaca**: material global (Blur, Liquid Glass, Hitam buram), material notch, tingkat blur, transparansi, refraksi tepi kaca |
 | **Stage Manager** | Semua pengaturan Stage Manager |
 | **Sudut Layar** | Aksi untuk empat hot corner |
 | **Spotlight** | Riwayat Papan Klip |
@@ -236,9 +329,20 @@ Pintasan lain (hot corner) diatur di Pengaturan. Bila sebuah pintasan tidak beke
 
 ## 13. Privasi dan keamanan
 
-- **Tanpa jaringan dan tanpa telemetri.** ABRA tidak mengirim data ke mana pun. Satu-satunya akses internet tidak langsung adalah
-  baris "Cari di web" di Spotlight, yang membuka browser Anda hanya jika Anda memilihnya.
+- **Tanpa telemetri.** ABRA tidak mengumpulkan atau mengirim data pemakaian. Satu-satunya permintaan jaringan yang dilakukan ABRA
+  sendiri adalah **pencarian lirik** untuk notch: bila lagu tidak punya berkas `.lrc` lokal, ABRA bertanya ke
+  [LRCLIB](https://lrclib.net) dengan judul, artis, album, dan durasi lagu saja, lalu menyimpan jawabannya di
+  `%APPDATA%\ABRA\lyrics\cache`. Aktif bawaan; matikan di Pengaturan → Notch → Lirik → "Cari lirik online (LRCLIB)".
+  Baris "Cari di web" di Spotlight hanya membuka browser Anda bila Anda memilihnya.
 - **Data lokal.** Pengaturan, sematan, dan log disimpan di `%APPDATA%\ABRA`. Tidak ada data yang dikumpulkan.
+- **Unduhan di notch.** ABRA hanya membaca nama dan ukuran berkas sementara di folder Unduhan, antrean pemasangan Microsoft
+  Store milik Windows, dan berkas status Steam (`appmanifest_*.acf`); isi berkas tidak dibuka dan tidak ada yang dikirim.
+- **Wi-Fi dan Bluetooth.** Daftar jaringan dan perangkat dibaca dari Windows saat menunya dibuka dan tidak disimpan.
+- **Kirim ke HP.** Selama sesi Kirim, ABRA membuka server web kecil sementara di alamat jaringan lokal laptop (port
+  acak, tautan berisi kode acak). Hanya berkas yang Anda taruh yang bisa diunduh, hanya dari perangkat di jaringan
+  lokal, dan servernya mati saat sesi berakhir. Tidak ada yang lewat internet atau server luar.
+- **Kalender.** Kartu kalender di tab Timer membaca judul dan jam acara satu tanggal dari Kalender Windows (hanya baca)
+  saat kartu itu terlihat; tidak ada yang disimpan atau dikirim.
 - **Hook keyboard.** Saat Stage Manager dan pengalih Alt+Tab aktif, ABRA memasang hook keyboard tingkat rendah semata-mata untuk
   menelan kombinasi `Alt+Tab` dan menampilkan pengalihnya. Ketikan tidak dicatat, disimpan, atau dikirim. Hook dilepas saat fitur
   dimatikan.

@@ -34,6 +34,8 @@ static MOUSE_HOOK: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsi
 static BAR_CTL: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 /// Pesan ke jendela bar: posisi notch berubah (diposting `services::set_notch`).
 const WM_NOTCH: u32 = WM_APP + 71;
+/// Khusus uji (`NACRE_TEST_NETMENU`): buka menu Wi-Fi/Bluetooth tanpa klik.
+const WM_TEST_NET: u32 = WM_APP + 75;
 const T_CLOCK: usize = 1;
 const T_STATUS: usize = 2;
 const T_APP: usize = 3;
@@ -105,6 +107,15 @@ thread_local! {
 
 fn with_bar<R>(f: impl FnOnce(&mut Bar) -> R) -> Option<R> {
     BAR.with(|c| c.try_borrow_mut().ok().and_then(|mut b| b.as_mut().map(|b| f(b))))
+}
+
+/// Minta keadaan radio terbaru (sakelar Wi-Fi/Bluetooth dibalik dari menu jaringan) agar ikon Wi-Fi ikut berubah.
+pub fn refresh_radios() {
+    with_bar(|b| {
+        if let Some(r) = &b.radios {
+            let _ = r.commands.send(radio::Cmd::Refresh);
+        }
+    });
 }
 
 /// Judul menu: kunci berawalan "Menu:" memisahkan terjemahan dari tab Settings bernama sama.
@@ -302,6 +313,28 @@ fn create(comp: &Compositor) -> windows_core::Result<Box<Bar>> {
     let radios = radio::spawn(move || unsafe {
         let _ = PostMessageW(Some(HWND(hw as *mut _)), WM_APP + 22, WPARAM(0), LPARAM(0));
     });
+    // uji tanpa klik: "wifi", "wifi-others" (Jaringan Lain dibuka), "bt"
+    if let Ok(v) = std::env::var("NACRE_TEST_NETMENU") {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            let code = match v.as_str() {
+                "bt" => 1,
+                "wifi-others" => 2,
+                "cc" => 4,
+                "bt-click" => 6,
+                _ => 0,
+            };
+            unsafe {
+                let _ = PostMessageW(Some(HWND(hw as *mut _)), WM_TEST_NET, WPARAM(code), LPARAM(0));
+            }
+            if code == 2 || code == 4 || code == 6 {
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+                unsafe {
+                    let _ = PostMessageW(Some(HWND(hw as *mut _)), WM_TEST_NET, WPARAM(code + 1), LPARAM(0));
+                }
+            }
+        });
+    }
     let mut bar = Box::new(Bar {
         popup,
         comp: comp.clone(),
@@ -408,8 +441,20 @@ impl Bar {
         use nacre_core::settings::BarStyle;
         let p = prefs::get();
         let d = self.dpi;
-        let flat = if p.menubar_glass { Some(match p.menubar_style { BarStyle::Light => (248, 248, 250), BarStyle::Dark => (0, 0, 0) }) } else { None };
-        let _ = self.popup.panel.set_rect(0.0, 0.0, 0.0, 0.0);
+        let flat = if p.menubar_glass && !p.menubar_material { Some(match p.menubar_style { BarStyle::Light => (248, 248, 250), BarStyle::Dark => (0, 0, 0) }) } else { None };
+        if p.menubar_material {
+            // strip memakai material global (Blur / Liquid Glass / Hitam buram) lewat panel kaca yang sama dengan dock
+            let look = prefs::look(prefs::Role::Themed);
+            let base = nacre_ui::glass::GlassParams::dark((self.screen.0 as f32, self.h as f32), 0.0);
+            // strip lebar layar: tanpa garis tepi/kilau kaca (rim akan terlihat sebagai outline putih di sekeliling bar)
+            let mut gp = prefs::apply(base, &look);
+            gp.rim.A = 0;
+            gp.highlight = 0.0;
+            let _ = self.popup.panel.set_params(gp);
+            let _ = self.popup.panel.set_rect(0.0, 0.0, self.screen.0 as f32, self.h as f32);
+        } else {
+            let _ = self.popup.panel.set_rect(0.0, 0.0, 0.0, 0.0);
+        }
         let _ = self.bg.SetSize(Vector2 { X: self.screen.0 as f32, Y: self.h as f32 });
         match flat {
             Some((r, g, b)) => {
@@ -426,7 +471,11 @@ impl Bar {
         let line = d.round().max(1.0);
         let _ = self.hair.SetSize(Vector2 { X: self.screen.0 as f32, Y: line });
         let _ = self.hair.SetOffset(Vector3 { X: 0.0, Y: self.h as f32 - line, Z: 0.0 });
-        let hc = match (p.menubar_glass, p.menubar_style) {
+        let hc = match (p.menubar_glass && !p.menubar_material, p.menubar_style) {
+            _ if p.menubar_material => {
+                // garis tepi bawah halus mengikuti terang/gelap material
+                Some(if prefs::look(prefs::Role::Themed).dark { Color { A: 18, R: 255, G: 255, B: 255 } } else { Color { A: 22, R: 0, G: 0, B: 0 } })
+            }
             (false, _) => None,
             (true, BarStyle::Light) => Some(Color { A: 34, R: 0, G: 0, B: 0 }),
             (true, BarStyle::Dark) => Some(Color { A: 40, R: 255, G: 255, B: 255 }),
@@ -442,35 +491,13 @@ impl Bar {
         }
     }
 
-    /// Pilih teks putih atau gelap dari kecerahan wallpaper di ruang kosong bar (hysteresis agar tidak berkedip).
-    /// Latar rata Terang/Gelap: teks mengikuti warna latar. Mengembalikan true bila warna teks berubah.
+    /// Warna teks bar: selalu putih seperti macOS Tahoe, kecuali latar rata Terang (putih di atas putih tak terbaca).
+    /// Mengembalikan true bila warna teks berubah.
     fn update_text_color(&mut self) -> bool {
         use nacre_core::settings::BarStyle;
         let before = self.dark_text;
         let p = prefs::get();
-        if p.menubar_glass {
-            self.dark_text = p.menubar_style == BarStyle::Light;
-            return before != self.dark_text;
-        }
-        let y = (self.h / 2).max(1);
-        let left_end = self.left.last().map(|p| p.x + p.w).unwrap_or(0.0) as i32 + 24;
-        let right_start = self.right.last().map(|p| p.x).unwrap_or(self.screen.0 as f32) as i32 - 24;
-        let (gl, gr) = services::notch().map(|(l, r, _)| (l - 12, r + 12)).unwrap_or((right_start, right_start));
-        let mut pts = Vec::new();
-        for k in 0..10 {
-            if left_end < gl {
-                pts.push((left_end + (gl - left_end) * k / 10, y));
-            }
-            if gr < right_start {
-                pts.push((gr + (right_start - gr) * k / 10, y));
-            }
-        }
-        if pts.is_empty() {
-            pts = (0..12).map(|k| (self.screen.0 * k / 12 + 7, y)).collect();
-        }
-        if let Some(l) = sys::screen_luma(&pts) {
-            self.dark_text = if self.dark_text { l > 0.45 } else { l > 0.62 };
-        }
+        self.dark_text = p.menubar_glass && !p.menubar_material && p.menubar_style == BarStyle::Light;
         before != self.dark_text
     }
 
@@ -842,7 +869,7 @@ impl Bar {
         }
         self.update_text_color();
         // Latar transparan: bayangan teks tipis di bawah (hanya untuk teks putih) agar tetap terbaca di atas wallpaper terang.
-        if !self.dark_text && !prefs::get().menubar_glass {
+        if !self.dark_text && !prefs::get().menubar_glass && !prefs::get().menubar_material {
             self.shadow = true;
             self.draw_items();
             self.shadow = false;
@@ -1030,7 +1057,7 @@ impl Bar {
                     None => "-".to_string(),
                 };
                 let vol = nacre_platform::audio::latest();
-                let vtxt = if vol.available { format!("{} {}%{}", prefs::tr("Volume"), (vol.level * 100.0).round() as i32, if vol.muted { " (mute)" } else { "" }) } else { prefs::tr("Volume").to_string() };
+                let vtxt = if vol.available { format!("{} {}%{}", prefs::tr("Volume"), (vol.level * 100.0).round() as i32, if vol.muted { format!(" {}", prefs::tr("(senyap)")) } else { String::new() }) } else { prefs::tr("Volume").to_string() };
                 let btxt = match nacre_platform::brightness::latest() {
                     Some(v) => format!("{} {}%", prefs::tr("Kecerahan"), v),
                     None => prefs::tr("Kecerahan").to_string(),
@@ -1138,7 +1165,12 @@ impl Bar {
             }
             STAGEI => prefs::update(|st| st.stage = !st.stage),
             SEARCH => crate::spotlight::toggle(),
-            WIFI => launch::open("ms-settings:network-wifi"),
+            WIFI => {
+                // pemilih jaringan ala macOS tepat di bawah ikon (bukan membuka Pengaturan)
+                if let Some((x, _)) = self.rect_of(WIFI) {
+                    crate::netmenu::show(&self.comp, crate::netmenu::Which::Wifi, crate::netmenu::Anchor::Below(x as i32, self.h), self.dpi);
+                }
+            }
             BATT => launch::open("ms-settings:batterysaver"),
             CLOCK => keys::chord(&[keys::WIN, 0x4E]),
             _ => {}
@@ -1314,6 +1346,26 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 b.relayout();
                 b.render();
             });
+            LRESULT(0)
+        }
+        WM_TEST_NET => {
+            if wp.0 == 3 {
+                crate::netmenu::test_toggle_others();
+            } else if wp.0 == 4 {
+                let h = with_bar(|b| b.h).unwrap_or(30);
+                crate::controlcenter::toggle(h);
+            } else if wp.0 == 5 {
+                crate::controlcenter::test_open_picker();
+            } else if wp.0 == 7 {
+                crate::netmenu::test_click_audio();
+            } else {
+                let which = if wp.0 == 1 || wp.0 == 6 { crate::netmenu::Which::Bluetooth } else { crate::netmenu::Which::Wifi };
+                with_bar(|b| {
+                    if let Some((x, _)) = b.rect_of(WIFI) {
+                        crate::netmenu::show(&b.comp, which, crate::netmenu::Anchor::Below(x as i32, b.h), b.dpi);
+                    }
+                });
+            }
             LRESULT(0)
         }
         m if m == WM_APP + 22 => {

@@ -32,10 +32,10 @@ pub struct Loopback {
 
 impl Drop for Loopback {
     fn drop(&mut self) {
+        // Hanya beri tanda berhenti; thread keluar sendiri (≤100 ms). Dulu thread UI menunggu (join) di sini, dan bila
+        // driver audio sedang tersendat (mis. headphone Bluetooth tersambung ulang) seluruh ABRA ikut membeku.
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
+        drop(self.handle.take());
     }
 }
 

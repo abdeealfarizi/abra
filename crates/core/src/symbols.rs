@@ -35,6 +35,28 @@ pub enum Sym {
     Minus,
     Calendar,
     Note,
+    /// Keluaran audio (gelombang melingkar + segitiga), tombol pilih perangkat di modul Sound.
+    AirPlay,
+    /// Stopwatch (timer notch).
+    Stopwatch,
+    /// Jam dinding (notch diam).
+    Clock,
+    /// Baki terbuka (Rak di notch).
+    Tray,
+    Folder,
+    /// Sinyal Wi-Fi lemah (titik + 1 busur) dan sedang (titik + 2 busur); `Wifi` = penuh.
+    Wifi1,
+    Wifi2,
+    ChevronRight,
+    ChevronDown,
+    Headphones,
+    Keyboard,
+    Mouse,
+    /// Panah unduh membulat (tengah busur unduhan) dan centang (unduhan selesai).
+    ArrowDown,
+    Check,
+    /// Panah kirim (zona "Kirim" dan progres kirim ke HP).
+    ArrowUp,
 }
 
 /// Simbol untuk perintah menu bar (id yang dipakai `menubar.rs`); `None` = tanpa simbol.
@@ -170,11 +192,36 @@ fn shape(sym: Sym, p: P) -> bool {
             let (c, r, w) = ((0.43, 0.43), 0.27, 0.10);
             ring(p, c, r, w) <= 0.0 || line(p, (0.64, 0.64), (0.88, 0.88), 0.11) <= 0.0
         }
-        Sym::Wifi => {
+        Sym::Wifi | Sym::Wifi1 | Sym::Wifi2 => {
             let apex = (0.5, 0.80);
             let half = 0.78; // ≈ 45°
             let w = 0.10;
-            circle(p, apex, 0.075) <= 0.0 || [0.27f32, 0.46, 0.65].iter().any(|r| arc(p, apex, *r, w, half) <= 0.0)
+            let n = match sym {
+                Sym::Wifi1 => 1,
+                Sym::Wifi2 => 2,
+                _ => 3,
+            };
+            circle(p, apex, 0.075) <= 0.0 || [0.27f32, 0.46, 0.65][..n].iter().any(|r| arc(p, apex, *r, w, half) <= 0.0)
+        }
+        Sym::ChevronRight => line(p, (0.38, 0.22), (0.64, 0.5), 0.1) <= 0.0 || line(p, (0.64, 0.5), (0.38, 0.78), 0.1) <= 0.0,
+        Sym::ChevronDown => line(p, (0.22, 0.38), (0.5, 0.64), 0.1) <= 0.0 || line(p, (0.5, 0.64), (0.78, 0.38), 0.1) <= 0.0,
+        Sym::Headphones => {
+            // bando setengah lingkaran + dua bantalan telinga membulat
+            let band = arc(p, (0.5, 0.56), 0.34, 0.085, 1.5708) <= 0.0 && p.1 <= 0.58;
+            let cups = rrect(p, (0.21, 0.70), (0.09, 0.17), 0.07) <= 0.0 || rrect(p, (0.79, 0.70), (0.09, 0.17), 0.07) <= 0.0;
+            band || cups
+        }
+        Sym::Keyboard => {
+            let body = rrect(p, (0.5, 0.5), (0.44, 0.27), 0.08).abs() - 0.035 <= 0.0;
+            let keys = [0.32f32, 0.5, 0.68].iter().any(|x| circle(p, (*x, 0.41), 0.045) <= 0.0) || line(p, (0.33, 0.61), (0.67, 0.61), 0.075) <= 0.0;
+            body || keys
+        }
+        Sym::ArrowDown => line(p, (0.5, 0.14), (0.5, 0.80), 0.15) <= 0.0 || line(p, (0.22, 0.54), (0.5, 0.82), 0.15) <= 0.0 || line(p, (0.78, 0.54), (0.5, 0.82), 0.15) <= 0.0,
+        Sym::ArrowUp => line(p, (0.5, 0.86), (0.5, 0.20), 0.15) <= 0.0 || line(p, (0.22, 0.46), (0.5, 0.18), 0.15) <= 0.0 || line(p, (0.78, 0.46), (0.5, 0.18), 0.15) <= 0.0,
+        Sym::Check => line(p, (0.18, 0.54), (0.41, 0.76), 0.15) <= 0.0 || line(p, (0.41, 0.76), (0.82, 0.28), 0.15) <= 0.0,
+        Sym::Mouse => {
+            let body = rrect(p, (0.5, 0.5), (0.25, 0.40), 0.25).abs() - 0.04 <= 0.0;
+            body || line(p, (0.5, 0.22), (0.5, 0.36), 0.075) <= 0.0
         }
         Sym::Control => {
             // dua sakelar bertumpuk: atas terisi dengan lubang kenop di kanan, bawah garis tepi dengan kenop terisi di kiri
@@ -261,6 +308,42 @@ fn shape(sym: Sym, p: P) -> bool {
             let rings = line(p, (0.32, 0.12), (0.32, 0.26), 0.085) <= 0.0 || line(p, (0.68, 0.12), (0.68, 0.26), 0.085) <= 0.0;
             frame || header || rings
         }
+        Sym::Tray => {
+            let w = 0.085;
+            line(p, (0.14, 0.52), (0.14, 0.80), w) <= 0.0
+                || line(p, (0.14, 0.80), (0.86, 0.80), w) <= 0.0
+                || line(p, (0.86, 0.80), (0.86, 0.52), w) <= 0.0
+                || line(p, (0.14, 0.52), (0.36, 0.52), w) <= 0.0
+                || line(p, (0.36, 0.52), (0.42, 0.62), w) <= 0.0
+                || line(p, (0.42, 0.62), (0.58, 0.62), w) <= 0.0
+                || line(p, (0.58, 0.62), (0.64, 0.52), w) <= 0.0
+                || line(p, (0.64, 0.52), (0.86, 0.52), w) <= 0.0
+                || line(p, (0.5, 0.16), (0.5, 0.44), w) <= 0.0
+                || line(p, (0.38, 0.33), (0.5, 0.44), w) <= 0.0
+                || line(p, (0.62, 0.33), (0.5, 0.44), w) <= 0.0
+        }
+        Sym::Folder => {
+            let body = rrect(p, (0.5, 0.58), (0.38, 0.24), 0.07).abs() - 0.045 <= 0.0;
+            let tab = rrect(p, (0.30, 0.30), (0.18, 0.07), 0.05).abs() - 0.045 <= 0.0 && p.1 < 0.36;
+            body || tab
+        }
+        Sym::Clock => {
+            let c = (0.5, 0.5);
+            ring(p, c, 0.38, 0.09) <= 0.0 || line(p, c, (0.5, 0.27), 0.085) <= 0.0 || line(p, c, (0.66, 0.6), 0.085) <= 0.0
+        }
+        Sym::Stopwatch => {
+            let c = (0.5, 0.57);
+            ring(p, c, 0.32, 0.09) <= 0.0
+                || line(p, (0.5, 0.12), (0.5, 0.24), 0.10) <= 0.0
+                || line(p, (0.40, 0.11), (0.60, 0.11), 0.09) <= 0.0
+                || line(p, c, (0.5, 0.39), 0.085) <= 0.0
+                || line(p, (0.76, 0.27), (0.83, 0.20), 0.08) <= 0.0
+        }
+        Sym::AirPlay => {
+            let c = (0.5, 0.50);
+            let waves = arc(p, c, 0.36, 0.085, 2.25) <= 0.0 || arc(p, c, 0.20, 0.085, 2.25) <= 0.0;
+            waves || poly(p, &[(0.5, 0.58), (0.30, 0.90), (0.70, 0.90)]) - 0.03 <= 0.0
+        }
         Sym::Note => {
             let head = circle(p, (0.33, 0.74), 0.15) <= 0.0;
             let stem = line(p, (0.46, 0.72), (0.46, 0.18), 0.085) <= 0.0;
@@ -335,7 +418,7 @@ mod tests {
     fn menu_symbols_draw_and_command_map() {
         assert_eq!(for_command(111), Some(Sym::Restart));
         assert_eq!(for_command(999), None);
-        for s in [Sym::Info, Sym::Gear, Sym::Bag, Sym::Grid, Sym::Windows, Sym::XCircle, Sym::Moon, Sym::Restart, Sym::Power, Sym::Lock, Sym::EyeSlash, Sym::Speaker, Sym::SpeakerWave, Sym::SpeakerLow, Sym::SpeakerMid, Sym::SpeakerMute, Sym::Sun, Sym::SunSmall, Sym::Bluetooth, Sym::Play, Sym::Pause, Sym::Backward, Sym::Forward, Sym::Plus, Sym::Minus, Sym::Calendar, Sym::Note] {
+        for s in [Sym::Info, Sym::Gear, Sym::Bag, Sym::Grid, Sym::Windows, Sym::XCircle, Sym::Moon, Sym::Restart, Sym::Power, Sym::Lock, Sym::EyeSlash, Sym::Speaker, Sym::SpeakerWave, Sym::SpeakerLow, Sym::SpeakerMid, Sym::SpeakerMute, Sym::Sun, Sym::SunSmall, Sym::Bluetooth, Sym::Play, Sym::Pause, Sym::Backward, Sym::Forward, Sym::Plus, Sym::Minus, Sym::Calendar, Sym::Note, Sym::AirPlay, Sym::Stopwatch, Sym::Clock, Sym::Tray, Sym::Folder, Sym::Wifi1, Sym::Wifi2, Sym::ChevronRight, Sym::ChevronDown, Sym::Headphones, Sym::Keyboard, Sym::Mouse, Sym::ArrowDown, Sym::Check, Sym::ArrowUp] {
             let b = render(s, 40, [255, 255, 255]);
             let filled = b.chunks_exact(4).filter(|p| p[3] > 128).count();
             assert!(filled > 40 && filled < 40 * 40 * 3 / 4, "{s:?} terisi {filled}");

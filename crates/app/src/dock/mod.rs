@@ -65,6 +65,9 @@ const TIMER_HIDEWIN: usize = 107;
 const TIMER_START: usize = 108;
 const TIMER_REGION: usize = 109;
 const TIMER_RECONF: usize = 110;
+const TIMER_TRASH: usize = 111;
+/// Selang cek isi Recycle Bin untuk ikon kosong/berisi.
+const TRASH_POLL_MS: u32 = 4000;
 const WM_DISPLAYCHANGE: u32 = 0x007E;
 const WM_DPICHANGED: u32 = 0x02E0;
 
@@ -183,7 +186,7 @@ pub struct Dock {
     items: Vec<Item>,
     signature: Vec<(String, bool, usize)>,
     /// Gaya ikon yang sedang dipakai (untuk memuat ulang ikon saat berubah).
-    icon_key: (nacre_core::settings::IconStyle, u8, bool),
+    icon_key: (nacre_core::settings::IconStyle, u8, bool, bool),
     seen: Vec<String>,
 
     entries: Vec<Entry>,
@@ -193,6 +196,8 @@ pub struct Dock {
 
     surfaces: HashMap<String, CompositionDrawingSurface>,
     requested: HashSet<String>,
+    /// Recycle Bin berisi (ikon tempat sampah versi kertas).
+    trash_full: bool,
     worker: icons::Worker,
     /// Nilai `dock_plates` yang sedang diterapkan.
     plates: bool,
@@ -399,7 +404,7 @@ impl Dock {
                 stack_files: Vec::new(),
                 items: vec![],
                 signature: vec![],
-                icon_key: { let p = crate::prefs::get(); (p.icon_style, p.icon_tint, p.icon_pack) },
+                icon_key: { let p = crate::prefs::get(); (p.icon_style, p.icon_tint, p.icon_pack, crate::prefs::icon_dark()) },
                 seen: vec![],
                 entries: vec![],
                 slots: vec![],
@@ -407,6 +412,7 @@ impl Dock {
                 layout: Layout { cells: vec![], total: 0.0 },
                 surfaces: HashMap::new(),
                 requested: HashSet::new(),
+                trash_full: nacre_platform::recycle::is_full(),
                 worker,
                 plates: crate::prefs::get().dock_plates,
                 tracking: false,
@@ -451,6 +457,7 @@ impl Dock {
                 }
             });
             timer(hwnd, TIMER_START, 1600);
+            timer(hwnd, TIMER_TRASH, TRASH_POLL_MS);
             log::line("dock", &format!("dibuat tier={tier:?} mode={mode:?}"));
             Ok(hwnd)
         }
@@ -497,9 +504,7 @@ impl Dock {
             let _ = SetWindowPos(self.hwnd, None, self.win_pos.0, self.win_pos.1, w, self.win.1, SWP_NOACTIVATE | SWP_NOZORDER);
         }
         let _ = self._surface.root.SetSize(windows_numerics::Vector2 { X: w as f32, Y: self.win.1 as f32 });
-        if let Some(s) = &self.strip {
-            s.place(self.win_pos.0, self.screen.1 - 2, w, 2);
-        }
+        self.place_strip();
         log::line(
             "dock",
             &format!("jendela=({},{})-({},{}) layar={}x{} dpi={}", self.win_pos.0, self.win_pos.1, self.win_pos.0 + w, self.win_pos.1 + self.win.1, self.screen.0, self.screen.1, self.dpi),
@@ -620,6 +625,13 @@ impl Dock {
         (l, t, l + cw.ceil() as i32, t + (self.card_h + self.margin) as i32)
     }
 
+    /// Letakkan strip deteksi tepi tepat di tepi bawah layar selebar jendela dock.
+    fn place_strip(&self) {
+        if let Some(s) = &self.strip {
+            s.place(self.win_pos.0, self.screen.1 - 2, self.win.0, 2);
+        }
+    }
+
     fn sync_strip(&self) {
         if self.off {
             if let Some(s) = &self.strip {
@@ -731,10 +743,13 @@ impl Dock {
         if !icons::is_themed(LAUNCHPAD_KEY) && !self.surfaces.contains_key(LAUNCHPAD_KEY) {
             let px = ((self.m.icon * self.m.max_scale * 1.15) as i32).clamp(64, 256) as u32;
             let p = crate::prefs::get();
-            let data = nacre_core::iconplate::style_icon(&nacre_core::iconplate::launchpad_icon(px), p.icon_style, p.icon_tint);
+            let data = nacre_core::iconplate::style_icon_v(&nacre_core::iconplate::launchpad_icon(px), p.icon_style, p.icon_tint, crate::prefs::icon_dark());
             if let Ok(s) = self.gfx.surface_from_bgra(px, px, &data) {
                 self.surfaces.insert(LAUNCHPAD_KEY.to_string(), s);
             }
+        }
+        if !icons::is_themed(TRASH_PATH) && !self.surfaces.contains_key(TRASH_PATH) {
+            self.make_trash_surface();
         }
         for e in self.entries.clone() {
             let v = match e {
@@ -887,6 +902,33 @@ impl Dock {
         self.last_apply = Instant::now();
     }
 
+    /// Ikon tempat sampah Tahoe buatan sendiri (kosong/berisi), digayakan seperti ikon lain.
+    fn make_trash_surface(&mut self) {
+        let px = ((self.m.icon * self.m.max_scale * 1.15) as i32).clamp(64, 256) as u32;
+        let p = crate::prefs::get();
+        let raw = nacre_core::iconplate::free(&nacre_core::trash::icon(px, self.trash_full), px);
+        let data = nacre_core::iconplate::style_icon_v(&raw, p.icon_style, p.icon_tint, crate::prefs::icon_dark());
+        if let Ok(s) = self.gfx.surface_from_bgra(px, px, &data) {
+            self.surfaces.insert(TRASH_PATH.to_string(), s);
+        }
+    }
+
+    /// Recycle Bin berubah kosong ↔ berisi: ganti gambar ikon tanpa membangun ulang dock.
+    fn update_trash_icon(&mut self) {
+        if icons::is_themed(TRASH_PATH) {
+            return;
+        }
+        self.surfaces.remove(TRASH_PATH);
+        self.make_trash_surface();
+        if let Some(s) = self.surfaces.get(TRASH_PATH).cloned() {
+            for v in self.views.iter_mut() {
+                if matches!(&v.kind, Kind::App { path } if path == TRASH_PATH) {
+                    let _ = v.set_surface(&self.comp, &s);
+                }
+            }
+        }
+    }
+
     pub fn on_icons(&mut self) {
         while let Ok((path, bmp)) = self.worker.results.try_recv() {
             let Some(mut b) = bmp else { continue };
@@ -896,7 +938,7 @@ impl Dock {
             }
             if !icons::is_themed(&path) {
                 let p = crate::prefs::get();
-                b.bgra = nacre_core::iconplate::style_icon(&b.bgra, p.icon_style, p.icon_tint);
+                b.bgra = nacre_core::iconplate::style_icon_v(&b.bgra, p.icon_style, p.icon_tint, crate::prefs::icon_dark());
             }
             match self.gfx.surface_from_bgra(b.w, b.h, &b.bgra) {
                 Ok(surface) => {
@@ -915,7 +957,7 @@ impl Dock {
     /// Terapkan pengaturan: perilaku (mode/cadangan ruang) dan tampilan kaca. Dipanggil saat `WM_PREFS`.
     fn apply_prefs(&mut self) {
         let s = crate::prefs::get();
-        let key = (s.icon_style, s.icon_tint, s.icon_pack);
+        let key = (s.icon_style, s.icon_tint, s.icon_pack, crate::prefs::icon_dark());
         if key != self.icon_key {
             self.icon_key = key;
             nacre_platform::iconpack::configure(&paths::config_dir().join("iconpack"), s.icon_pack);
@@ -951,7 +993,10 @@ impl Dock {
                 self.strip = None;
                 self.edge_armed = false;
             } else if self.strip.is_none() {
+                // Bug lama: strip baru lahir di (0,0) 10×2 px dan baru dipindah saat dock dibangun ulang, sehingga
+                // setelah mengganti perilaku ke sembunyi, kursor di tepi bawah tidak pernah memunculkan dock.
                 self.strip = Strip::new(self.hwnd, STRIP_ENTER, STRIP_LEAVE).ok();
+                self.place_strip();
             }
             if appbar {
                 self.reserve_strip();
@@ -1029,8 +1074,8 @@ impl Dock {
             return;
         }
         let label = match self.entries.get(slot) {
-            Some(Entry::Start) => "Mulai".to_string(),
-            Some(Entry::Launchpad) => "Apps".to_string(),
+            Some(Entry::Start) => crate::prefs::tr("Mulai").to_string(),
+            Some(Entry::Launchpad) => crate::prefs::tr("Apps").to_string(),
             Some(Entry::Trash) => crate::prefs::tr("Tempat sampah").to_string(),
             Some(Entry::Downloads) => crate::prefs::tr("Unduhan").to_string(),
             // Seperti macOS: tooltip hanya nama app, bukan judul jendela.
@@ -1367,14 +1412,15 @@ impl Dock {
             items.push(menu::Item::action(CMD_OPEN, crate::prefs::tr("Buka"), true));
             let can_pin = it.pinned || !it.path.contains('?');
             items.push(menu::Item::action(CMD_PIN, crate::prefs::tr(if it.pinned { "Hapus dari dock" } else { "Simpan di dock" }), can_pin));
-            if it.running() {
-                items.push(menu::Item::action(CMD_CLOSE, crate::prefs::tr("Tutup"), true));
-            }
             items.push(menu::Item::action(CMD_ICON, crate::prefs::tr("Ubah ikon…"), true));
             if custom_icons::has(&it.path) {
                 items.push(menu::Item::action(CMD_ICON_RESET, crate::prefs::tr("Kembalikan ikon asli"), true));
             }
-            items.push(menu::Item::separator());
+            // seperti macOS: menutup app selalu paling bawah (refleks klik kanan → item terakhir)
+            if it.running() {
+                items.push(menu::Item::separator());
+                items.push(menu::Item::action(CMD_CLOSE, crate::prefs::tr("Tutup"), true));
+            }
         }
         if info.special == Some(DOWNLOADS_KEY) {
             items.push(menu::Item::action(CMD_STACK_FOLDER, crate::prefs::tr("Buka folder Unduhan"), true));
@@ -1387,12 +1433,17 @@ impl Dock {
             }
             items.push(menu::Item::separator());
         }
-        if info.item.is_none() && !info.trash {
+        // "Keluar dari ABRA" hanya di area kosong dock dan ikon Start, bukan di ikon app
+        let general = info.item.is_none() && !info.trash && (info.special.is_none() || info.special == Some(START_KEY));
+        if general {
             items.push(menu::Item::action(CMD_ADD, crate::prefs::tr("Tambah app ke dock…"), true));
             items.push(menu::Item::action(CMD_SETTINGS, crate::prefs::tr("Pengaturan ABRA…"), true));
             items.push(menu::Item::separator());
+            items.push(menu::Item::action(CMD_QUIT, crate::prefs::tr("Keluar dari ABRA"), true));
         }
-        items.push(menu::Item::action(CMD_QUIT, crate::prefs::tr("Keluar dari ABRA"), true));
+        while items.last().is_some_and(|i| i.separator) {
+            items.pop();
+        }
         self.pending_menu = Some(info);
         if self.menu.is_none() {
             self.menu = Menu::new(&self.comp, self.hwnd, self.dpi, self.screen, self.tier).ok();
@@ -1613,6 +1664,7 @@ impl Dock {
             CMD_TRASH_EMPTY => unsafe {
                 // Dialog konfirmasi bawaan Windows tetap muncul (flag 0): tidak ada penghapusan tanpa persetujuan.
                 let _ = windows::Win32::UI::Shell::SHEmptyRecycleBinW(Some(self.hwnd), windows::core::PCWSTR::null(), 0);
+                timer(self.hwnd, TIMER_TRASH, 300);
             },
             CMD_ADD => {
                 let picked = nacre_platform::pick::open_file(
@@ -1720,6 +1772,14 @@ impl Dock {
                 }
             }
             TIMER_RECONF => self.on_reconfigure(),
+            TIMER_TRASH => {
+                let full = nacre_platform::recycle::is_full();
+                if full != self.trash_full {
+                    self.trash_full = full;
+                    self.update_trash_icon();
+                }
+                timer(self.hwnd, TIMER_TRASH, TRASH_POLL_MS);
+            }
             _ => {}
         }
     }

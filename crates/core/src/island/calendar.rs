@@ -50,6 +50,44 @@ pub fn month_name(m: u32) -> &'static str {
     N[(m.clamp(1, 12) - 1) as usize]
 }
 
+/// Tanggal `delta` hari dari (y, m, d).
+pub fn add_days(y: i32, m: u32, d: u32, delta: i32) -> (i32, u32, u32) {
+    let (mut y, mut m, mut d) = (y, m, d as i32 + delta);
+    while d < 1 {
+        (y, m) = shift_month(y, m, -1);
+        d += days_in_month(y, m) as i32;
+    }
+    while d > days_in_month(y, m) as i32 {
+        d -= days_in_month(y, m) as i32;
+        (y, m) = shift_month(y, m, 1);
+    }
+    (y, m, d as u32)
+}
+
+/// Nama bulan singkat ("Nov" / "Agu" atau "Aug").
+pub fn month_short(m: u32, en: bool) -> &'static str {
+    const ID: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+    const EN: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let i = (m.clamp(1, 12) - 1) as usize;
+    if en {
+        EN[i]
+    } else {
+        ID[i]
+    }
+}
+
+/// Nama hari singkat huruf besar untuk strip tanggal (`wd` 0 = Minggu): "KAM" / "THU".
+pub fn weekday_short(wd: u32, en: bool) -> &'static str {
+    const ID: [&str; 7] = ["MIN", "SEN", "SEL", "RAB", "KAM", "JUM", "SAB"];
+    const EN: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    let i = (wd % 7) as usize;
+    if en {
+        EN[i]
+    } else {
+        ID[i]
+    }
+}
+
 pub fn weekday_labels(monday_first: bool) -> [&'static str; 7] {
     if monday_first {
         ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
@@ -93,6 +131,19 @@ mod tests {
         assert_eq!(shift_month(2026, 1, -1), (2025, 12));
         assert_eq!(shift_month(2026, 6, 0), (2026, 6));
         assert_eq!(shift_month(2026, 3, -15), (2024, 12));
+    }
+
+    #[test]
+    fn add_days_crosses_months_and_years() {
+        assert_eq!(add_days(2026, 11, 13, 0), (2026, 11, 13));
+        assert_eq!(add_days(2026, 11, 30, 1), (2026, 12, 1));
+        assert_eq!(add_days(2026, 12, 31, 1), (2027, 1, 1));
+        assert_eq!(add_days(2026, 3, 1, -1), (2026, 2, 28));
+        assert_eq!(add_days(2024, 3, 1, -1), (2024, 2, 29));
+        assert_eq!(add_days(2026, 1, 2, -40), (2025, 11, 23));
+        assert_eq!(weekday_short(weekday(2026, 11, 13), false), "JUM");
+        assert_eq!(weekday_short(4, true), "THU");
+        assert_eq!((month_short(8, false), month_short(8, true)), ("Agu", "Aug"));
     }
 
     #[test]

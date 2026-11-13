@@ -25,11 +25,14 @@ pub struct Snapshot {
     pub has_media: bool,
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub playing: bool,
     pub position_ms: i64,
     pub duration_ms: i64,
     pub can_seek: bool,
     pub art: ArtUpdate,
+    /// AppUserModelID app sumber (mis. "Spotify.exe", "Chrome"), untuk badge ikon app di notch.
+    pub app: String,
 }
 
 pub enum Command {
@@ -64,6 +67,26 @@ fn read_art(r: Option<IRandomAccessStreamReference>) -> Option<Vec<u8>> {
     (!all.is_empty()).then_some(all)
 }
 
+/// Properti media (termasuk sampul) berubah sejak snapshot terakhir. Browser mengirim judul lebih dulu dengan logo
+/// browser sebagai gambar sementara, lalu sampul aslinya menyusul lewat event yang sama.
+static PROPS_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Keadaan sampul antar-snapshot: kunci lagu, sidik isi gambar, dan kapan lagu berganti.
+struct ArtState {
+    key: String,
+    hash: u64,
+    since: std::time::Instant,
+}
+
+fn fnv(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 struct Subscriptions {
     session: Option<GlobalSystemMediaTransportControlsSession>,
     tokens: (i64, i64, i64),
@@ -91,6 +114,7 @@ impl Subscriptions {
         let Some(s) = session else { return };
         let t1 = tx.clone();
         let a = s.MediaPropertiesChanged(&TypedEventHandler::<_, MediaPropertiesChangedEventArgs>::new(move |_, _| {
+            PROPS_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = t1.send(Command::Refresh);
             Ok(())
         }));
@@ -136,7 +160,7 @@ pub fn spawn(notify: impl Fn() + Send + 'static) -> Media {
         }));
 
         let mut subs = Subscriptions { session: None, tokens: (0, 0, 0) };
-        let mut last_key = String::new();
+        let mut art_state = ArtState { key: String::new(), hash: 0, since: std::time::Instant::now() };
         let mut pending = true; // snapshot awal
 
         loop {
@@ -146,7 +170,8 @@ pub fn spawn(notify: impl Fn() + Send + 'static) -> Media {
                     manager.GetSessions().ok().and_then(|v| v.GetAt(0).ok())
                 });
                 subs.follow(current.clone(), &tx_for_events);
-                let snap = build(current.as_ref(), &mut last_key);
+                let recheck = PROPS_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed);
+                let snap = build(current.as_ref(), &mut art_state, recheck);
                 if snap_tx.send(snap).is_err() {
                     return;
                 }
@@ -201,37 +226,61 @@ fn act(manager: &GlobalSystemMediaTransportControlsSessionManager, cmd: Command)
     }
 }
 
-fn build(session: Option<&GlobalSystemMediaTransportControlsSession>, last_key: &mut String) -> Snapshot {
-    let empty = |last_key: &mut String| {
-        last_key.clear();
+/// Snapshot sesi `session`. Sampul dibaca saat lagu berganti, saat properti media berubah (`recheck`), dan selama 8 detik
+/// pertama sebuah lagu (sampul dari browser sering menyusul); hanya didekode ulang bila isinya memang berbeda.
+fn build(session: Option<&GlobalSystemMediaTransportControlsSession>, art_state: &mut ArtState, recheck: bool) -> Snapshot {
+    let empty = |st: &mut ArtState| {
+        st.key.clear();
+        st.hash = 0;
         Snapshot {
             has_media: false,
             title: String::new(),
             artist: String::new(),
+            album: String::new(),
             playing: false,
             position_ms: 0,
             duration_ms: 0,
             can_seek: false,
             art: ArtUpdate::None,
+            app: String::new(),
         }
     };
-    let Some(s) = session else { return empty(last_key) };
-    let Some(props) = s.TryGetMediaPropertiesAsync().ok().and_then(|o| o.join().ok()) else { return empty(last_key) };
+    let Some(s) = session else { return empty(art_state) };
+    let Some(props) = s.TryGetMediaPropertiesAsync().ok().and_then(|o| o.join().ok()) else { return empty(art_state) };
     let title = props.Title().map(|t| t.to_string()).unwrap_or_default();
     if title.is_empty() {
-        return empty(last_key);
+        return empty(art_state);
     }
     let artist = props.Artist().map(|t| t.to_string()).unwrap_or_default();
+    let album = props.AlbumTitle().map(|t| t.to_string()).unwrap_or_default();
 
     let key = format!("{title}\u{1}{artist}");
-    let art = if *last_key == key {
-        ArtUpdate::Unchanged
-    } else {
-        *last_key = key;
-        match read_art(props.Thumbnail().ok()).and_then(|b| crate::wic::decode_square(&b, 128)) {
-            Some(bmp) => ArtUpdate::New(bmp),
-            None => ArtUpdate::None,
+    let new_track = art_state.key != key;
+    if new_track {
+        art_state.key = key;
+        art_state.hash = 0;
+        art_state.since = std::time::Instant::now();
+    }
+    let art = if new_track || recheck || art_state.since.elapsed() < Duration::from_secs(8) {
+        match read_art(props.Thumbnail().ok()) {
+            Some(bytes) => {
+                let h = fnv(&bytes);
+                if h == art_state.hash && !new_track {
+                    ArtUpdate::Unchanged
+                } else {
+                    art_state.hash = h;
+                    match crate::wic::decode_square(&bytes, 128) {
+                        Some(bmp) => ArtUpdate::New(bmp),
+                        None if new_track => ArtUpdate::None,
+                        None => ArtUpdate::Unchanged,
+                    }
+                }
+            }
+            None if new_track => ArtUpdate::None,
+            None => ArtUpdate::Unchanged,
         }
+    } else {
+        ArtUpdate::Unchanged
     };
 
     let playing = s
@@ -253,7 +302,8 @@ fn build(session: Option<&GlobalSystemMediaTransportControlsSession>, last_key: 
         }
         Err(_) => (0, 0),
     };
-    Snapshot { has_media: true, title, artist, playing, position_ms, duration_ms, can_seek, art }
+    let app = s.SourceAppUserModelId().map(|h| h.to_string()).unwrap_or_default();
+    Snapshot { has_media: true, title, artist, album, playing, position_ms, duration_ms, can_seek, art, app }
 }
 
 

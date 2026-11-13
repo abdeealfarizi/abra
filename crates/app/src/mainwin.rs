@@ -5,7 +5,7 @@ use crate::{paths, single_instance};
 use nacre_platform::shell::taskbar;
 use std::sync::atomic::{AtomicU32, Ordering};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
@@ -43,6 +43,18 @@ pub fn set_exit_timer(hwnd: HWND, seconds: u32) {
     }
 }
 
+/// Ikon ABRA (sumber daya id 1 di exe, ditanam build.rs) seukuran ikon kecil sistem; cadangan: ikon aplikasi umum.
+fn tray_icon() -> HICON {
+    unsafe {
+        let hi = GetModuleHandleW(None).map(|h| HINSTANCE(h.0)).ok();
+        let (cx, cy) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        match LoadImageW(hi, PCWSTR(1 as *const u16), IMAGE_ICON, cx, cy, LR_SHARED) {
+            Ok(h) if !h.is_invalid() => HICON(h.0),
+            _ => LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+        }
+    }
+}
+
 fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
     let mut nid = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -50,7 +62,7 @@ fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
         uID: 1,
         uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
         uCallbackMessage: WM_TRAY,
-        hIcon: unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() },
+        hIcon: tray_icon(),
         ..Default::default()
     };
     for (i, c) in "ABRA".encode_utf16().enumerate() {

@@ -6,8 +6,25 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
-    FileOpenDialog, IFileOpenDialog, IShellLinkW, ShellLink, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, SIGDN_FILESYSPATH,
+    FileOpenDialog, IFileOpenDialog, IShellLinkW, ShellLink, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS,
+    SIGDN_FILESYSPATH,
 };
+
+/// Tampilkan dialog pilih folder.
+pub fn folder(title: &str) -> Option<String> {
+    unsafe {
+        let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let opts = dlg.GetOptions().ok()?;
+        dlg.SetOptions(opts | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM).ok()?;
+        let _ = dlg.SetTitle(&HSTRING::from(title));
+        dlg.Show(Some(HWND::default())).ok()?;
+        let item = dlg.GetResult().ok()?;
+        let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let s = name.to_string().ok();
+        windows::Win32::System::Com::CoTaskMemFree(Some(name.0 as *const _));
+        s
+    }
+}
 
 /// Tampilkan dialog buka berkas. `filters`: pasangan (nama tampil, pola seperti "*.exe;*.lnk").
 pub fn open_file(title: &str, filters: &[(&str, &str)]) -> Option<String> {

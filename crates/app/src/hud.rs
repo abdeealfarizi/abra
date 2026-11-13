@@ -57,6 +57,9 @@ enum Kind {
 struct Bar {
     kind: Kind,
     popup: Popup,
+    /// Judul: nama perangkat keluaran (volume) atau "Layar" (kecerahan), seperti "MacBook Pro Speakers" di video.
+    title: SpriteVisual,
+    title_text: String,
     fill: SpriteVisual,
     icon: SpriteVisual,
     icon2: SpriteVisual,
@@ -168,22 +171,13 @@ impl Hud {
                 // kanan atas, tepat di bawah menu bar
                 popup.set_rect(screen.0 - bw - (12.0 * dpi) as i32, (34.0 * dpi) as i32, bw, bh)?;
                 popup.panel.set_radius(24.0 * dpi)?;
-                // judul
-                let title = if i == 0 { crate::prefs::tr("Volume") } else { crate::prefs::tr("Kecerahan") };
-                let tpx = (14.0 * dpi).round() as i32;
-                let (tw, th) = text::measure(title, &Style { px: tpx, weight: 500 });
-                if let Some(bmp) = text::render(title, &Style { px: tpx, weight: 500 }, tw + 2, th) {
-                    let surf = gfx.surface_from_bgra(bmp.w, bmp.h, &bmp.bgra)?;
-                    let br = host.compositor.CreateSurfaceBrushWithSurface(&surf)?;
-                    br.SetStretch(CompositionStretch::None)?;
-                    let tv = host.compositor.CreateSpriteVisual()?;
-                    tv.SetBrush(&br)?;
-                    tv.SetSize(Vector2 { X: bmp.w as f32, Y: bmp.h as f32 })?;
-                    tv.SetOffset(Vector3 { X: 18.0 * dpi, Y: 9.0 * dpi, Z: 0.0 })?;
-                    popup.content.Children()?.InsertAtTop(&tv)?;
-                }
+                // judul (diisi `update_title` saat tampil: nama perangkat bisa berubah)
+                let tv = host.compositor.CreateSpriteVisual()?;
+                tv.SetOffset(Vector3 { X: 18.0 * dpi, Y: 10.0 * dpi, Z: 0.0 })?;
+                tv.SetOpacity(0.95)?;
+                popup.content.Children()?.InsertAtTop(&tv)?;
                 // lintasan + isi (horizontal)
-                let (track_w, track_h) = (Self::track_w(dpi), 6.0 * dpi);
+                let (track_w, track_h) = (Self::track_w(dpi), 5.0 * dpi);
                 let (tx, ty) = (Self::track_x(dpi), Self::track_y(dpi));
                 let track = host.compositor.CreateSpriteVisual()?;
                 track.SetSize(Vector2 { X: track_w, Y: track_h })?;
@@ -197,6 +191,16 @@ impl Hud {
                 fill.SetBrush(&host.compositor.CreateColorBrushWithColor(Color { A: 245, R: 255, G: 255, B: 255 })?)?;
                 fill.SetClip(&Self::clip(&host.compositor, track_w, track_h, track_h / 2.0)?)?;
                 popup.content.Children()?.InsertAtTop(&fill)?;
+                // 16 titik skala di bawah lintasan, seperti HUD Tahoe
+                let dot = (2.4 * dpi).max(2.0);
+                for k in 0..16 {
+                    let d = host.compositor.CreateSpriteVisual()?;
+                    d.SetSize(Vector2 { X: dot, Y: dot })?;
+                    d.SetOffset(Vector3 { X: tx + k as f32 * (track_w - dot) / 15.0, Y: ty + track_h + 7.0 * dpi, Z: 0.0 })?;
+                    d.SetBrush(&host.compositor.CreateColorBrushWithColor(Color { A: 120, R: 255, G: 255, B: 255 })?)?;
+                    d.SetClip(&Self::clip(&host.compositor, dot, dot, dot / 2.0)?)?;
+                    popup.content.Children()?.InsertAtTop(&d)?;
+                }
                 // ikon di kedua ujung (simbol vektor buatan sendiri)
                 let (sl, sr) = if i == 0 { (nacre_core::symbols::Sym::Speaker, nacre_core::symbols::Sym::SpeakerWave) } else { (nacre_core::symbols::Sym::SunSmall, nacre_core::symbols::Sym::Sun) };
                 let isz = (16.0 * dpi).round() as u32;
@@ -225,7 +229,7 @@ impl Hud {
                     s.place(sx, (screen.1 - bh) / 2, 2, bh);
                     s.set_visible(true);
                 }
-                bars.push(Bar { kind, popup, fill, icon, icon2, time: Timeline::default(), shown: false, edge: false, over: false, strip });
+                bars.push(Bar { kind, popup, title: tv, title_text: String::new(), fill, icon, icon2, time: Timeline::default(), shown: false, edge: false, over: false, strip });
             }
             let mut hud = Box::new(Hud {
                 hwnd: ctl,
@@ -239,6 +243,8 @@ impl Hud {
                 last_glyph: [String::new(), String::new()],
             });
             hud.update_values(false);
+            hud.update_title(0);
+            hud.update_title(1);
             SetWindowLongPtrW(ctl, GWLP_USERDATA, Box::into_raw(hud) as isize);
             services::register_hud(ctl);
             crate::prefs::listen(ctl);
@@ -308,10 +314,39 @@ impl Hud {
                 let f: CompositionObject = bar.fill.cast().unwrap();
                 self.spring(&f, "Size.X", fill_w);
             } else {
-                let _ = bar.fill.SetSize(Vector2 { X: fill_w, Y: 6.0 * self.dpi });
+                let _ = bar.fill.SetSize(Vector2 { X: fill_w, Y: 5.0 * self.dpi });
             }
             // ikon kiri: speaker kosong saat senyap atau 0
             let _ = (level, muted, &self.last_glyph, kind);
+        }
+    }
+
+    /// Tulis ulang judul bila berubah (mis. pindah dari speaker ke headphone).
+    fn update_title(&mut self, i: usize) {
+        let t = match self.bars[i].kind {
+            Kind::Volume => {
+                let n = audio::output_name();
+                if n.is_empty() { crate::prefs::tr("Volume").to_string() } else { n }
+            }
+            Kind::Brightness => crate::prefs::tr("Layar").to_string(),
+        };
+        if t == self.bars[i].title_text {
+            return;
+        }
+        let d = self.dpi;
+        let style = Style { px: (13.0 * d).round() as i32, weight: 600 };
+        let (tw, th) = text::measure(&t, &style);
+        let tw = (tw + 2).min((Self::box_w(d) - 36.0 * d) as i32);
+        let Some(bmp) = text::render(&t, &style, tw, th) else { return };
+        let go = || -> windows_core::Result<()> {
+            let surf = self.gfx.surface_from_bgra(bmp.w, bmp.h, &bmp.bgra)?;
+            let br = self.comp.CreateSurfaceBrushWithSurface(&surf)?;
+            br.SetStretch(CompositionStretch::None)?;
+            self.bars[i].title.SetBrush(&br)?;
+            self.bars[i].title.SetSize(Vector2 { X: bmp.w as f32, Y: bmp.h as f32 })
+        };
+        if go().is_ok() {
+            self.bars[i].title_text = t;
         }
     }
 
@@ -319,6 +354,7 @@ impl Hud {
         if !ENABLED.load(Ordering::Relaxed) || Self::value_of(self.bars[i].kind).is_none() {
             return;
         }
+        self.update_title(i);
         let now = self.now();
         // volume dan kecerahan memakai satu tempat: yang lain disembunyikan
         for j in 0..self.bars.len() {

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "abra-guard"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nacre-core",
  "nacre-platform",
@@ -215,7 +215,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nacre-app"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nacre-core",
  "nacre-platform",
@@ -227,11 +227,11 @@ dependencies = [
 
 [[package]]
 name = "nacre-core"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "nacre-platform"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nacre-core",
  "serde",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "nacre-ui"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "windows 0.62.2",
  "windows-core 0.62.2",

@@ -27,7 +27,9 @@ unsafe extern "system" fn proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             );
             let inside = pt.x >= l && pt.x < r && pt.y >= t && pt.y < b;
             if !inside {
-                let _ = PostMessageW(Some(HWND(TARGET.load(Ordering::Relaxed) as *mut _)), MSG.load(Ordering::Relaxed), WPARAM(0), LPARAM(0));
+                // titik klik (layar) di lParam seperti MAKELPARAM, untuk pemilik yang perlu tahu di mana klik terjadi
+                let packed = ((pt.y as i16 as u16 as u32) << 16) | (pt.x as i16 as u16 as u32);
+                let _ = PostMessageW(Some(HWND(TARGET.load(Ordering::Relaxed) as *mut _)), MSG.load(Ordering::Relaxed), WPARAM(0), LPARAM(packed as isize));
                 return LRESULT(1); // telan klik penutup
             }
         }

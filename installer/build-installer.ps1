@@ -1,8 +1,8 @@
 # Builds dist\ABRA-Setup-<version>.exe with Inno Setup 6.
-# Usage:  powershell -File installer\build-installer.ps1 [-Source <folder with abra.exe + abra-guard.exe>] [-Version 0.1.0]
+# Usage:  powershell -File installer\build-installer.ps1 [-Source <folder with abra.exe + abra-guard.exe>] [-Version 0.3.0]
 param(
   [string]$Source = (Join-Path $PSScriptRoot "..\target\release"),
-  [string]$Version = "0.1.0"
+  [string]$Version = "0.3.0"
 )
 $ErrorActionPreference = "Stop"
 

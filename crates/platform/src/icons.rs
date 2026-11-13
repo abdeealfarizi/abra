@@ -9,7 +9,7 @@ use windows::Win32::Graphics::Gdi::{
     DIB_RGB_COLORS, HGDIOBJ,
 };
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
-use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, SIIGBF_RESIZETOFIT};
 
 #[derive(Clone)]
 pub struct Bitmap {
@@ -105,6 +105,49 @@ pub fn load(path: &str, px: i32) -> Option<Bitmap> {
         }
     }
     load_shell(path, px)
+}
+
+/// Thumbnail isi berkas (foto, dokumen, video) muat dalam kotak `px`×`px`, rasio aspek dipertahankan; berkas tanpa
+/// thumbnail mendapat ikonnya. Thread pemanggil harus sudah menginisialisasi COM.
+pub fn thumbnail(path: &str, px: i32) -> Option<Bitmap> {
+    unsafe {
+        let factory: IShellItemImageFactory = SHCreateItemFromParsingName(&HSTRING::from(path), None).ok()?;
+        let hbmp = factory.GetImage(SIZE { cx: px, cy: px }, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK).ok()?;
+        let mut bm = BITMAP::default();
+        let got = GetObjectW(HGDIOBJ(hbmp.0), std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _));
+        if got == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0 {
+            let _ = DeleteObject(HGDIOBJ(hbmp.0));
+            return None;
+        }
+        let (w, h) = (bm.bmWidth as u32, bm.bmHeight as u32);
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut buf = vec![0u8; (w * h * 4) as usize];
+        let dc = GetDC(None);
+        let lines = GetDIBits(dc, hbmp, 0, h, Some(buf.as_mut_ptr() as *mut _), &mut info, DIB_RGB_COLORS);
+        ReleaseDC(None, dc);
+        let _ = DeleteObject(HGDIOBJ(hbmp.0));
+        if lines == 0 {
+            return None;
+        }
+        // Foto/JPEG datang tanpa alfa (semua 0): jadikan opak agar tidak tak terlihat.
+        if buf.chunks_exact(4).all(|p| p[3] == 0) {
+            for p in buf.chunks_exact_mut(4) {
+                p[3] = 255;
+            }
+        }
+        Some(Bitmap { w, h, bgra: buf })
+    }
 }
 
 fn load_shell(path: &str, px: i32) -> Option<Bitmap> {

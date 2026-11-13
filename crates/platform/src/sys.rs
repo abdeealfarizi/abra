@@ -48,6 +48,17 @@ pub fn battery() -> Option<(u8, bool)> {
 
 /// Ukuran monitor primer dalam piksel fisik. Untuk pengujian, NACRE_SCREEN_FILE menunjuk berkas berisi
 /// LEBARxTINGGI yang dibaca setiap kali (mensimulasikan perubahan resolusi tanpa mengubah layar sungguhan).
+/// Warna aksen Windows (Pengaturan → Personalisasi → Warna), untuk aksen "Multiwarna".
+pub fn accent_color() -> Option<[u8; 3]> {
+    let mut v: u32 = 0;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    unsafe {
+        RegGetValueW(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\DWM"), w!("AccentColor"), RRF_RT_REG_DWORD, None, Some(&mut v as *mut u32 as *mut _), Some(&mut size)).ok().ok()?;
+    }
+    // DWORD 0xAABBGGRR
+    Some([(v & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, ((v >> 16) & 0xFF) as u8])
+}
+
 pub fn screen_size() -> (i32, i32) {
     if let Some(p) = std::env::var_os("NACRE_SCREEN_FILE") {
         if let Ok(text) = std::fs::read_to_string(p) {

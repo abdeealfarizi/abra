@@ -18,6 +18,32 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, 
 static LEVEL: AtomicU32 = AtomicU32::new(0);
 static MUTED: AtomicBool = AtomicBool::new(false);
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
+/// Nama perangkat keluaran bawaan (mis. "Speakers (Realtek(R) Audio)") untuk judul HUD volume.
+static NAME: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Nama perangkat keluaran suara saat ini ("" bila belum diketahui).
+pub fn output_name() -> String {
+    NAME.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+fn read_name(device: &windows::Win32::Media::Audio::IMMDevice) -> Option<String> {
+    use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
+    use windows::Win32::System::Com::{CoTaskMemFree, STGM_READ};
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    // PKEY_Device_FriendlyName
+    const KEY: PROPERTYKEY = PROPERTYKEY { fmtid: windows::core::GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0), pid: 14 };
+    unsafe {
+        let store: IPropertyStore = device.OpenPropertyStore(STGM_READ).ok()?;
+        let mut pv = store.GetValue(&KEY).ok()?;
+        let s = PropVariantToStringAlloc(&pv).ok().and_then(|p| {
+            let t = p.to_string().ok();
+            CoTaskMemFree(Some(p.0 as *const _));
+            t
+        });
+        let _ = PropVariantClear(&mut pv);
+        s.filter(|t| !t.is_empty())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Volume {
@@ -105,6 +131,9 @@ impl Drop for Attached {
 fn attach(enumerator: &IMMDeviceEnumerator, notify: &std::sync::Arc<dyn Fn() + Send + Sync>) -> Option<Attached> {
     unsafe {
         let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+        if let (Some(n), Ok(mut g)) = (read_name(&device), NAME.lock()) {
+            *g = n;
+        }
         let ep: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
         let n = notify.clone();
         let cb: IAudioEndpointVolumeCallback = VolCb { notify: Box::new(move || n()) }.into();

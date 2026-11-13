@@ -49,6 +49,38 @@ pub fn exe_path_of_pid(pid: u32) -> Option<String> {
     }
 }
 
+/// Jalur exe proses yang punya jendela tingkat atas dan bernama berkas `name` (mis. "Spotify.exe"); dipakai bila sesi
+/// media hanya memberi nama exe sebagai id app.
+pub fn exe_path_of_running(name: &str) -> Option<String> {
+    struct Find {
+        name: String,
+        found: Option<String>,
+        seen: Vec<u32>,
+    }
+    unsafe extern "system" fn cb(hwnd: HWND, lp: LPARAM) -> BOOL {
+        let f = &mut *(lp.0 as *mut Find);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 || f.seen.contains(&pid) {
+            return BOOL(1);
+        }
+        f.seen.push(pid);
+        if let Some(path) = exe_path_of_pid(pid) {
+            let file = path.rsplit('\\').next().unwrap_or("").to_ascii_lowercase();
+            if file == f.name {
+                f.found = Some(path);
+                return BOOL(0);
+            }
+        }
+        BOOL(1)
+    }
+    let mut f = Find { name: name.to_ascii_lowercase(), found: None, seen: Vec::new() };
+    unsafe {
+        let _ = EnumWindows(Some(cb), LPARAM(&mut f as *mut Find as isize));
+    }
+    f.found
+}
+
 fn is_cloaked(hwnd: HWND) -> bool {
     let mut cloaked = 0u32;
     unsafe {

@@ -91,6 +91,14 @@ pub fn scalar(comp: &Compositor, obj: &impl Interface, prop: &str, from: f32, to
     obj.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from(prop), &a)
 }
 
+/// Warna kuas berpindah halus dari nilainya sekarang ke `to`.
+pub fn color(comp: &Compositor, brush: &impl Interface, to: windows::UI::Color, ms: u32) -> Result<()> {
+    let a = comp.CreateColorKeyFrameAnimation()?;
+    a.InsertKeyFrameWithEasingFunction(1.0, to, &ease(comp)?)?;
+    a.SetDuration(dur(ms))?;
+    brush.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from("Color"), &a)
+}
+
 pub fn vec3(comp: &Compositor, obj: &impl Interface, prop: &str, from: Vector3, to: Vector3, ms: u32) -> Result<()> {
     let e = ease(comp)?;
     let a = comp.CreateVector3KeyFrameAnimation()?;

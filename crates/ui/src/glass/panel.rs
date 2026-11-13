@@ -9,6 +9,9 @@ use windows_numerics::{Vector2, Vector3};
 
 /// Kekuatan tepi kanan-bawah relatif terhadap kiri-atas: kilau tepi Tahoe terlihat di dua sisi.
 const RIM_BOTTOM: f32 = 0.8;
+/// Kekuatan tepi di pita tengah (sudut kanan-atas/kiri-bawah). Cukup tinggi agar garis tepi tetap menyambung di bentuk
+/// lebar-pendek (kapsul, slider), yang dengan pemetaan gradien relatif hampir seluruh tepinya jatuh di pita ini.
+const RIM_MID: f32 = 0.42;
 
 /// Tingkat material, dari paling mahal ke paling murah. Perpindahan hanya menukar kuas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,7 +120,7 @@ impl GlassPanel {
         let rs = rg.ColorStops()?;
         let rim_stops = rs.clone();
         let top = p.rim;
-        let mid = Color { A: (p.rim.A as f32 * 0.14) as u8, ..p.rim };
+        let mid = Color { A: (p.rim.A as f32 * RIM_MID) as u8, ..p.rim };
         let bottom = Color { A: (p.rim.A as f32 * RIM_BOTTOM) as u8, ..p.rim };
         rs.Append(&comp.CreateColorGradientStopWithOffsetAndColor(0.0, top)?)?;
         rs.Append(&comp.CreateColorGradientStopWithOffsetAndColor(0.5, mid)?)?;
@@ -161,7 +164,7 @@ impl GlassPanel {
         self.p.highlight = p.highlight;
         self.tint_brush.SetColor(p.tint)?;
         self.rim_stops.GetAt(0)?.SetColor(p.rim)?;
-        self.rim_stops.GetAt(1)?.SetColor(Color { A: (p.rim.A as f32 * 0.14) as u8, ..p.rim })?;
+        self.rim_stops.GetAt(1)?.SetColor(Color { A: (p.rim.A as f32 * RIM_MID) as u8, ..p.rim })?;
         self.rim_stops.GetAt(2)?.SetColor(Color { A: (p.rim.A as f32 * RIM_BOTTOM) as u8, ..p.rim })?;
         let t = self.tier;
         self.apply_tier(t)

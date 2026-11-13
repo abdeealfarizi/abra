@@ -2,7 +2,7 @@
 ; Build:  powershell -File installer\build-installer.ps1   (needs Inno Setup 6: https://jrsoftware.org/isinfo.php)
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\target\release"
@@ -33,6 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=..\assets\abra.ico
 CloseApplications=no
 
 [Tasks]

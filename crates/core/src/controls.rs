@@ -204,7 +204,7 @@ impl Kind {
 }
 
 pub fn default_layout() -> Vec<Kind> {
-    vec![Kind::Wifi, Kind::NowPlaying, Kind::Bluetooth, Kind::Share, Kind::Stage, Kind::Mission, Kind::DarkMode, Kind::Screenshot, Kind::Focus, Kind::Sound, Kind::Display]
+    vec![Kind::Wifi, Kind::NowPlaying, Kind::Bluetooth, Kind::Share, Kind::Stage, Kind::Mission, Kind::DarkMode, Kind::Screenshot, Kind::Focus, Kind::Display, Kind::Sound]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!((at(Kind::Mission).col, at(Kind::Mission).row), (3, 2));
         // slider selalu menempati satu baris penuh
         assert_eq!(at(Kind::Display).w, 4);
-        assert_eq!(at(Kind::Display).row, at(Kind::Sound).row + 1); // Tahoe: Sound di atas Display
+        assert_eq!(at(Kind::Sound).row, at(Kind::Display).row + 1); // seperti contoh: Display di atas Sound
         assert!(rows >= 6);
     }
 

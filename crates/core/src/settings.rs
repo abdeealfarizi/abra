@@ -41,8 +41,11 @@ impl Behavior {
     pub fn mode(self) -> Mode {
         match self {
             Behavior::Fixed | Behavior::Overlay => Mode::Always,
-            Behavior::AutoHide => Mode::AutoHide,
-            Behavior::Peek => Mode::OnDemand,
+            // Seperti macOS "Sembunyikan dan tampilkan Dock secara otomatis": selalu tersembunyi, muncul saat kursor
+            // menyentuh tepi layar, hilang lagi saat kursor pergi.
+            Behavior::AutoHide => Mode::OnDemand,
+            // Pintar: hanya menyingkir bila ada jendela yang menimpa permukaan.
+            Behavior::Peek => Mode::AutoHide,
         }
     }
 
@@ -113,6 +116,8 @@ impl BlurStyle {
 /// Material permukaan (dock/notch). Dua permukaan memakai pilihan yang sama.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Material {
+    /// Blur: kabut tebal (blur kuat, tint tipis, tepi cahaya halus) seperti contoh Tahoe; mengikuti tema.
+    Blur,
     /// Liquid Glass: kaca berbias, mengikuti tema.
     Glass,
     /// Hitam buram seperti notch MacBook: hitam pekat dengan blur halus.
@@ -122,6 +127,7 @@ pub enum Material {
 impl Material {
     pub fn parse(s: &str) -> Option<Material> {
         match s.trim().to_ascii_lowercase().as_str() {
+            "blur" | "buram" | "frosted" => Some(Material::Blur),
             "glass" | "liquid" | "liquidglass" => Some(Material::Glass),
             "black" | "hitam" => Some(Material::Black),
             // Material "transparan" sudah dihapus (terlalu mirip Liquid Glass); config lama dipetakan ke Liquid Glass.
@@ -131,11 +137,12 @@ impl Material {
     }
     pub fn key(self) -> &'static str {
         match self {
+            Material::Blur => "blur",
             Material::Glass => "glass",
             Material::Black => "black",
         }
     }
-    pub const ALL: [Material; 2] = [Material::Glass, Material::Black];
+    pub const ALL: [Material; 3] = [Material::Blur, Material::Glass, Material::Black];
 }
 
 /// Bahan latar menu bar bila latar aktif (`menubar_glass`): kaca mengikuti tema, atau terang/gelap yang lebih pekat.
@@ -162,6 +169,9 @@ impl BarStyle {
 }
 
 /// Warna aksen sistem ala Tahoe: Biru, Ungu, Merah Muda, Merah, Oranye, Kuning, Hijau, Grafit.
+/// Nilai `accent` khusus: Multiwarna (ikut warna aksen Windows), seperti Multicolor di macOS.
+pub const ACCENT_MULTI: u8 = 255;
+
 pub const ACCENTS: [[u8; 3]; 8] = [[10, 132, 255], [175, 82, 222], [255, 55, 95], [255, 69, 58], [255, 149, 10], [255, 204, 0], [48, 209, 88], [142, 142, 147]];
 
 /// Gaya ikon ala Tahoe (Pengaturan Sistem > Tampilan > Gaya ikon dan widget).
@@ -235,6 +245,50 @@ impl HotAction {
     }
 }
 
+/// Teks pendek yang tetap `Copy` (Settings disalin ke banyak tempat): UTF-8 paling banyak 96 byte, satu baris.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ShortText {
+    len: u8,
+    buf: [u8; 96],
+}
+
+impl ShortText {
+    pub const EMPTY: ShortText = ShortText { len: 0, buf: [0; 96] };
+
+    /// Rapikan (buang karakter kendali dan spasi di tepi) lalu potong di batas karakter bila lebih dari 96 byte.
+    pub fn new(s: &str) -> ShortText {
+        let clean: String = s.chars().filter(|c| !c.is_control()).collect();
+        let clean = clean.trim();
+        let mut end = clean.len().min(96);
+        while !clean.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut buf = [0u8; 96];
+        buf[..end].copy_from_slice(&clean.as_bytes()[..end]);
+        ShortText { len: end as u8, buf }
+    }
+
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len as usize]).unwrap_or("")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl Default for ShortText {
+    fn default() -> Self {
+        ShortText::EMPTY
+    }
+}
+
+impl std::fmt::Debug for ShortText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.as_str())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Mode penuh: dock aktif ⇒ taskbar Windows disembunyikan permanen.
@@ -279,6 +333,8 @@ pub struct Settings {
     pub clock_24h: bool,
     /// Latar kaca di belakang menu bar (mati bawaan: transparan seperti macOS Tahoe).
     pub menubar_glass: bool,
+    /// Latar menu bar memakai material global (Blur/Liquid Glass/Hitam) sebagai strip, bukan transparan atau warna rata.
+    pub menubar_material: bool,
     /// Bahan latar menu bar saat `menubar_glass` aktif.
     pub menubar_style: BarStyle,
     /// Hot corner: kiri-atas, kanan-atas, kiri-bawah, kanan-bawah.
@@ -316,6 +372,24 @@ pub struct Settings {
     pub icon_tint: u8,
     /// Indeks warna aksen (`ACCENTS`).
     pub accent: u8,
+    /// Varian gaya ikon: 0 Otomatis (ikut tema), 1 Terang, 2 Gelap.
+    pub icon_variant: u8,
+    /// Efek minimize: 0 Genie, 1 Skala (seperti pilihan macOS).
+    pub min_effect: u8,
+    /// Notch diam: 0 = sapaan & info, 1 = kosong, 2 = musik & lirik (pemutar lebar selama ada lagu).
+    pub notch_idle: u8,
+    /// Nama di sapaan notch (kosong = nama akun Windows).
+    pub greet_name: ShortText,
+    /// Teks sapaan kustom (kosong = otomatis menurut jam).
+    pub greet_text: ShortText,
+    /// Baris lirik yang sedang dinyanyikan tampil di notch tertutup.
+    pub lyrics_compact: bool,
+    /// Cari lirik online di LRCLIB bila tidak ada berkas .lrc lokal (satu-satunya akses jaringan ABRA).
+    pub lyrics_online: bool,
+    /// Unduhan yang berjalan (Store, Steam, peramban) tampil di notch.
+    pub notch_downloads: bool,
+    /// Zona "Kirim" di notch: kirim berkas ke HP lewat QR + browser (server lokal sementara).
+    pub notch_send: bool,
     /// Pintasan ala Mac global (Alt+` ganti jendela app, Ctrl+Alt+H/M/Q).
     pub mac_shortcuts: bool,
     /// Tumpukan Unduhan di dock (klik menampilkan berkas terbaru).
@@ -333,7 +407,7 @@ impl Default for Settings {
             dock: Behavior::Fixed,
             notch: Behavior::Fixed,
             blur: 60,
-            style: BlurStyle::Frosted,
+            style: BlurStyle::Clear,
             transparency: 50,
             theme: Theme::Auto,
             lang: Lang::Id,
@@ -355,6 +429,7 @@ impl Default for Settings {
             menubar: false,
             clock_24h: true,
             menubar_glass: false,
+            menubar_material: false,
             menubar_style: BarStyle::Light,
             hot: [HotAction::None; 4],
             stage: false,
@@ -375,6 +450,15 @@ impl Default for Settings {
             icon_style: IconStyle::Default,
             icon_tint: 0,
             accent: 0,
+            icon_variant: 0,
+            min_effect: 0,
+            notch_idle: 0,
+            greet_name: ShortText::EMPTY,
+            greet_text: ShortText::EMPTY,
+            lyrics_compact: true,
+            lyrics_online: true,
+            notch_downloads: true,
+            notch_send: true,
             mac_shortcuts: true,
             downloads_stack: true,
             recent_apps: true,
@@ -404,7 +488,8 @@ impl Settings {
                 "dock" => s.dock = Behavior::parse(v).unwrap_or(s.dock),
                 "notch" => s.notch = Behavior::parse(v).unwrap_or(s.notch),
                 "blur" => s.blur = v.parse::<i32>().map(|n| n.clamp(0, 100) as u8).unwrap_or(s.blur),
-                "style" => s.style = BlurStyle::parse(v).unwrap_or(s.style),
+                // Gaya blur tidak bisa dipilih lagi: selalu Clear (nilai lama di berkas diabaikan).
+                "style" => {}
                 "transparency" => s.transparency = v.parse::<i32>().map(|n| n.clamp(0, 100) as u8).unwrap_or(s.transparency),
                 "theme" => s.theme = Theme::parse(v).unwrap_or(s.theme),
                 "lang" => s.lang = Lang::parse(v).unwrap_or(s.lang),
@@ -471,7 +556,32 @@ impl Settings {
                         s.mac_shortcuts = b;
                     }
                 }
-                "accent" => s.accent = v.parse::<i32>().map(|n| n.clamp(0, 7) as u8).unwrap_or(s.accent),
+                "accent" => s.accent = v.parse::<i32>().map(|n| if n == ACCENT_MULTI as i32 { ACCENT_MULTI } else { n.clamp(0, 7) as u8 }).unwrap_or(s.accent),
+                "min_effect" => s.min_effect = v.parse::<i32>().map(|n| n.clamp(0, 1) as u8).unwrap_or(s.min_effect),
+                "notch_idle" => s.notch_idle = v.parse::<i32>().map(|n| n.clamp(0, 2) as u8).unwrap_or(s.notch_idle),
+                "greet_name" => s.greet_name = ShortText::new(v),
+                "greet_text" => s.greet_text = ShortText::new(v),
+                "lyrics_compact" => {
+                    if let Some(b) = parse_bool(v) {
+                        s.lyrics_compact = b;
+                    }
+                }
+                "lyrics_online" => {
+                    if let Some(b) = parse_bool(v) {
+                        s.lyrics_online = b;
+                    }
+                }
+                "notch_downloads" => {
+                    if let Some(b) = parse_bool(v) {
+                        s.notch_downloads = b;
+                    }
+                }
+                "notch_send" => {
+                    if let Some(b) = parse_bool(v) {
+                        s.notch_send = b;
+                    }
+                }
+                "icon_variant" => s.icon_variant = v.parse::<i32>().map(|n| n.clamp(0, 2) as u8).unwrap_or(s.icon_variant),
                 "icon_tint" => s.icon_tint = v.parse::<i32>().map(|n| n.clamp(0, 4) as u8).unwrap_or(s.icon_tint),
                 "clipboard_history" => {
                     if let Some(b) = parse_bool(v) {
@@ -514,6 +624,11 @@ impl Settings {
                         legacy_glass = true;
                     } else {
                         s.menubar_style = BarStyle::parse(v).unwrap_or(s.menubar_style);
+                    }
+                }
+                "menubar_material" => {
+                    if let Some(b) = parse_bool(v) {
+                        s.menubar_material = b;
                     }
                 }
                 "menubar_glass" => {
@@ -567,7 +682,7 @@ impl Settings {
 
     pub fn serialize(&self) -> String {
         format!(
-            "# ABRA settings\ntakeover={}\ndock={}\nnotch={}\nblur={}\nstyle={}\ntransparency={}\ntheme={}\nlang={}\ndock_material={}\ndock_round={}\nnotch_material={}\nnotch_round={}\nautostart={}\ndock_size={}\ndock_gap={}\ndock_zoom={}\ndock_margin={}\nanim={}\nrefraction={}\ndock_enabled={}\nnotch_enabled={}\nnotch_hover_open={}\nwin_shadow={}\nmenubar={}\nclock_24h={}\nmenubar_glass={}\nhot_tl={}\nhot_tr={}\nhot_bl={}\nhot_br={}\nstage={}\nswitcher={}\nstage_right={}\nstage_size={}\nstage_gap={}\nstage_count={}\nstage_speed={}\nstage_desktop_click={}\nstage_media={}\nstage_icons={}\nstage_titles={}\nhide_desktop_icons={}\nmenubar_style={}\ndock_plates={}\nabove_fullscreen={}\nclipboard_history={}\nicon_style={}\nicon_tint={}\naccent={}\nmac_shortcuts={}\ndownloads_stack={}\nrecent_apps={}\nicon_pack={}\n",
+            "# ABRA settings\ntakeover={}\ndock={}\nnotch={}\nblur={}\nstyle={}\ntransparency={}\ntheme={}\nlang={}\ndock_material={}\ndock_round={}\nnotch_material={}\nnotch_round={}\nautostart={}\ndock_size={}\ndock_gap={}\ndock_zoom={}\ndock_margin={}\nanim={}\nrefraction={}\ndock_enabled={}\nnotch_enabled={}\nnotch_hover_open={}\nwin_shadow={}\nmenubar={}\nclock_24h={}\nmenubar_glass={}\nhot_tl={}\nhot_tr={}\nhot_bl={}\nhot_br={}\nstage={}\nswitcher={}\nstage_right={}\nstage_size={}\nstage_gap={}\nstage_count={}\nstage_speed={}\nstage_desktop_click={}\nstage_media={}\nstage_icons={}\nstage_titles={}\nhide_desktop_icons={}\nmenubar_style={}\ndock_plates={}\nabove_fullscreen={}\nclipboard_history={}\nicon_style={}\nicon_tint={}\naccent={}\nmac_shortcuts={}\ndownloads_stack={}\nrecent_apps={}\nicon_pack={}\nmenubar_material={}\nicon_variant={}\nmin_effect={}\nnotch_idle={}\ngreet_name={}\ngreet_text={}\nlyrics_compact={}\nlyrics_online={}\nnotch_downloads={}\nnotch_send={}\n",
             self.takeover,
             self.dock.key(),
             self.notch.key(),
@@ -620,7 +735,17 @@ impl Settings {
             self.mac_shortcuts,
             self.downloads_stack,
             self.recent_apps,
-            self.icon_pack
+            self.icon_pack,
+            self.menubar_material,
+            self.icon_variant,
+            self.min_effect,
+            self.notch_idle,
+            self.greet_name.as_str(),
+            self.greet_text.as_str(),
+            self.lyrics_compact,
+            self.lyrics_online,
+            self.notch_downloads,
+            self.notch_send
         )
     }
 }
@@ -691,6 +816,18 @@ pub fn look(s: &Settings, system_dark: bool, material: Material) -> Look {
             saturation = saturation.min(1.25);
             rim = if dark { [150, 255, 255, 255] } else { [170, 255, 255, 255] };
         }
+        Material::Blur => {
+            // Blur ala contoh Tahoe: kabut tebal. Blur kuat (tidak mengikuti pengali gaya), sedikit pudar warnanya,
+            // tint tipis, dan tepi cahaya halus; bentuk datar (sorotan kecil) supaya terlihat seperti kaca berkabut.
+            // Jernih tapi tetap berkabut: tint tipis supaya latar terlihat tembus, blur sedang-kuat, tepi cahaya jelas.
+            a = if dark { lerp(100.0, 30.0, t) } else { lerp(120.0, 40.0, t) };
+            (tr, tg, tb) = if dark { (26, 28, 30) } else { (240, 242, 246) };
+            blur_sigma = lerp(8.0, 36.0, b);
+            saturation = 1.1;
+            // garis tepi sangat tipis saja (kesan "timbul"); strip menu bar menghilangkannya sendiri
+            rim = if dark { [34, 255, 255, 255] } else { [60, 255, 255, 255] };
+            highlight = 0.2;
+        }
         Material::Black => {
             // Hitam pekat ala notch: transparansi hanya melonggarkan sedikit.
             (tr, tg, tb) = (10, 10, 12);
@@ -758,7 +895,7 @@ menubar_style=glass
 
     #[test]
     fn roundtrip() {
-        let s = Settings { takeover: false, dock: Behavior::AutoHide, notch: Behavior::Overlay, blur: 12, style: BlurStyle::Vivid, transparency: 90, theme: Theme::Light, lang: Lang::En, dock_material: Material::Black, dock_round: 80, notch_material: Material::Glass, notch_round: 10, autostart: true, dock_size: 60, dock_gap: 10, dock_zoom: 200, dock_margin: 30, anim: false, refraction: false, dock_enabled: false, notch_enabled: false, notch_hover_open: false, win_shadow: false, menubar: true, clock_24h: false, menubar_glass: true, hot: [HotAction::Mission, HotAction::Launchpad, HotAction::Lock, HotAction::Stage], stage: true, switcher: false, ..Default::default() };
+        let s = Settings { takeover: false, dock: Behavior::AutoHide, notch: Behavior::Overlay, blur: 12, style: BlurStyle::Clear, transparency: 90, theme: Theme::Light, lang: Lang::En, dock_material: Material::Black, dock_round: 80, notch_material: Material::Glass, notch_round: 10, autostart: true, dock_size: 60, dock_gap: 10, dock_zoom: 200, dock_margin: 30, anim: false, refraction: false, dock_enabled: false, notch_enabled: false, notch_hover_open: false, win_shadow: false, menubar: true, clock_24h: false, menubar_glass: true, hot: [HotAction::Mission, HotAction::Launchpad, HotAction::Lock, HotAction::Stage], stage: true, switcher: false, ..Default::default() };
         assert_eq!(Settings::parse(&s.serialize()), s);
     }
 
@@ -791,8 +928,8 @@ dock_margin=900");
         assert!(Behavior::Fixed.reserves());
         assert!(!Behavior::Overlay.reserves());
         assert_eq!(Behavior::Overlay.mode(), Mode::Always);
-        assert_eq!(Behavior::AutoHide.mode(), Mode::AutoHide);
-        assert_eq!(Behavior::Peek.mode(), Mode::OnDemand);
+        assert_eq!(Behavior::AutoHide.mode(), Mode::OnDemand, "auto-hide ala macOS: selalu sembunyi sampai tepi disentuh");
+        assert_eq!(Behavior::Peek.mode(), Mode::AutoHide);
     }
 
     #[test]
@@ -813,6 +950,64 @@ dock_margin=900");
     }
 
     #[test]
+    fn blur_material_is_foggier_than_glass_and_follows_theme() {
+        let s = Settings::default();
+        let glass = look(&s, true, Material::Glass);
+        let blur = look(&s, true, Material::Blur);
+        assert!(blur.blur_sigma > glass.blur_sigma * 1.5, "blur {} vs glass {}", blur.blur_sigma, glass.blur_sigma);
+        assert!(blur.dark && !look(&s, false, Material::Blur).dark);
+        assert!(blur.tint[0] >= 60 && blur.rim[0] > 0 && blur.rim[0] < 60, "rim Blur sangat tipis");
+        assert_eq!(Material::parse("blur"), Some(Material::Blur));
+        assert_eq!(Material::Blur.key(), "blur");
+        assert_eq!(Material::ALL.len(), 3);
+    }
+
+    #[test]
+    fn notch_greeting_settings_round_trip() {
+        let s = Settings::parse("notch_idle=1\ngreet_name=  Rani =)  \ngreet_text=Semangat, \u{1F680}!\n");
+        assert_eq!(s.notch_idle, 1);
+        assert_eq!(s.greet_name.as_str(), "Rani =)");
+        let again = Settings::parse(&s.serialize());
+        assert_eq!((again.notch_idle, again.greet_name, again.greet_text), (1, s.greet_name, s.greet_text));
+        assert_eq!(Settings::default().notch_idle, 0);
+        assert_eq!(Settings::parse(&Settings::parse("notch_idle=2\n").serialize()).notch_idle, 2, "musik & lirik");
+        assert_eq!(Settings::parse("notch_idle=9\n").notch_idle, 2);
+        let d = Settings::default();
+        assert!(d.lyrics_compact && d.lyrics_online, "lirik online aktif bawaan (keputusan pengguna)");
+        let off = Settings::parse(&Settings::parse("lyrics_online=false\nlyrics_compact=0\nnotch_downloads=0\n").serialize());
+        assert!(!off.lyrics_online && !off.lyrics_compact && !off.notch_downloads);
+        assert!(d.notch_downloads, "unduhan di notch aktif bawaan");
+        assert!(d.notch_send, "zona Kirim aktif bawaan");
+        assert!(!Settings::parse(&Settings::parse("notch_send=0\n").serialize()).notch_send);
+        assert!(Settings::default().greet_name.is_empty());
+        // baris baru dibuang, teks panjang dipotong di batas karakter
+        assert_eq!(ShortText::new("a\nb").as_str(), "ab");
+        let long = "é".repeat(80);
+        let t = ShortText::new(&long);
+        assert!(t.as_str().len() <= 96 && t.as_str().chars().all(|c| c == 'é'));
+    }
+
+    #[test]
+    fn multicolor_accent_and_icon_variant_round_trip() {
+        let s = Settings::parse("accent=255\nicon_variant=2\n");
+        assert_eq!(s.accent, ACCENT_MULTI);
+        assert_eq!(s.icon_variant, 2);
+        let again = Settings::parse(&s.serialize());
+        assert_eq!((again.accent, again.icon_variant), (ACCENT_MULTI, 2));
+        assert_eq!(Settings::parse("accent=9\n").accent, 7);
+    }
+
+    #[test]
+    fn blur_style_option_is_gone_and_always_clear() {
+        let s = Settings::parse("style=vivid
+menubar_material=true
+");
+        assert_eq!(s.style, BlurStyle::Clear);
+        assert!(s.menubar_material);
+        assert!(Settings::default().style == BlurStyle::Clear);
+    }
+
+    #[test]
     fn look_responds_to_controls() {
         let mut s = Settings::default();
         let base = look(&s, true, Material::Glass);
@@ -822,8 +1017,6 @@ dock_margin=900");
         s.transparency = 100;
         assert!(look(&s, true, Material::Glass).tint[0] < base.tint[0]);
         s = Settings::default();
-        s.style = BlurStyle::Clear;
-        assert!(look(&s, true, Material::Glass).blur_sigma < base.blur_sigma);
         s.theme = Theme::Light;
         assert!(!look(&s, true, Material::Glass).dark);
         s.theme = Theme::Auto;
