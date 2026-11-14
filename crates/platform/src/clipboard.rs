@@ -11,7 +11,7 @@ use windows::Win32::System::DataExchange::{
     RemoveClipboardFormatListener, SetClipboardData,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const CF_UNICODETEXT: u32 = 13;
@@ -69,16 +69,34 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
+/// Isi tidak boleh masuk riwayat: ada format "Exclude…", atau "CanIncludeInClipboardHistory" bukan DWORD bukan-nol
+/// (nilai 0 = jangan simpan; data rusak/tak terbaca juga dianggap jangan, demi keamanan).
+fn opted_out(exclude: bool, can_include: Option<&[u8]>) -> bool {
+    exclude || can_include.is_some_and(|b| b.len() < 4 || b[..4] == [0; 4])
+}
+
 unsafe fn read_text(hwnd: HWND) -> Option<String> {
     for _ in 0..6 {
         if OpenClipboard(Some(hwnd)).is_ok() {
             let r = (|| {
                 // pengelola kata sandi menandai isi sensitif: jangan simpan
-                for name in [w!("ExcludeClipboardContentFromMonitorProcessing")] {
+                let has = |name| {
                     let f = RegisterClipboardFormatW(name);
-                    if f != 0 && IsClipboardFormatAvailable(f).is_ok() {
-                        return None;
+                    (f != 0 && IsClipboardFormatAvailable(f).is_ok()).then_some(f)
+                };
+                let can = has(w!("CanIncludeInClipboardHistory")).map(|f| {
+                    let Ok(h) = GetClipboardData(f) else { return Vec::new() };
+                    let g = windows::Win32::Foundation::HGLOBAL(h.0);
+                    let p = GlobalLock(g) as *const u8;
+                    if p.is_null() {
+                        return Vec::new();
                     }
+                    let v = std::slice::from_raw_parts(p, GlobalSize(g).min(4)).to_vec();
+                    let _ = GlobalUnlock(g);
+                    v
+                });
+                if opted_out(has(w!("ExcludeClipboardContentFromMonitorProcessing")).is_some(), can.as_deref()) {
+                    return None;
                 }
                 if IsClipboardFormatAvailable(CF_UNICODETEXT).is_err() {
                     return None;
@@ -173,6 +191,46 @@ fn _unused(_: PCWSTR) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn penanda_sensitif_diabaikan() {
+        assert!(!opted_out(false, None), "tanpa penanda: simpan");
+        assert!(opted_out(true, None));
+        assert!(opted_out(false, Some(&0u32.to_le_bytes())), "CanIncludeInClipboardHistory=0");
+        assert!(!opted_out(false, Some(&1u32.to_le_bytes())), "CanIncludeInClipboardHistory=1");
+        assert!(opted_out(false, Some(&[1, 0])), "data rusak dianggap jangan");
+        assert!(opted_out(true, Some(&1u32.to_le_bytes())), "Exclude menang");
+    }
+
+    unsafe fn put(text: &str, can_include: Option<u32>) {
+        assert!(OpenClipboard(None).is_ok());
+        let _ = EmptyClipboard();
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let h = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).unwrap();
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), GlobalLock(h) as *mut u16, wide.len());
+        let _ = GlobalUnlock(h);
+        SetClipboardData(CF_UNICODETEXT, Some(windows::Win32::Foundation::HANDLE(h.0))).unwrap();
+        if let Some(v) = can_include {
+            let h = GlobalAlloc(GMEM_MOVEABLE, 4).unwrap();
+            std::ptr::copy_nonoverlapping(v.to_le_bytes().as_ptr(), GlobalLock(h) as *mut u8, 4);
+            let _ = GlobalUnlock(h);
+            SetClipboardData(RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory")), Some(windows::Win32::Foundation::HANDLE(h.0))).unwrap();
+        }
+        let _ = CloseClipboard();
+    }
+
+    #[test]
+    #[ignore = "menimpa papan klip sistem; jalankan manual: cargo test -p nacre-platform clipboard -- --ignored"]
+    fn papan_klip_asli_menghormati_can_include() {
+        unsafe {
+            let lama = read_text(HWND::default());
+            put("rahasia-uji", Some(0));
+            assert_eq!(read_text(HWND::default()), None);
+            put("boleh-uji", Some(1));
+            assert_eq!(read_text(HWND::default()).as_deref(), Some("boleh-uji"));
+            put(lama.as_deref().unwrap_or(""), None);
+        }
+    }
 
     #[test]
     fn push_dedups_trims_old_and_caps() {
