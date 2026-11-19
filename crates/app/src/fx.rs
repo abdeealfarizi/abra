@@ -1,7 +1,7 @@
 use crate::prefs;
 use nacre_platform::wins::park::{self, Parked};
 use nacre_platform::wins::{enumerate, focus, snapshot, tracker};
-use nacre_platform::{log, sys};
+use nacre_platform::log;
 use nacre_ui::gfx::Gfx;
 use nacre_ui::host::{attach, Host, Surface};
 use std::cell::RefCell;
@@ -76,6 +76,7 @@ struct Fx {
     comp: Compositor,
     gfx: Gfx,
     surface: Surface,
+    screen_origin: (i32, i32),
     screen: (i32, i32),
     snap: Option<Snap>,
     parked: Vec<Snap>,
@@ -140,13 +141,18 @@ pub fn init(host: &Host) -> windows_core::Result<()> {
         let hi: HINSTANCE = GetModuleHandleW(None)?.into();
         let class = w!("AbraFx");
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc), hInstance: hi, lpszClassName: class, ..Default::default() });
-        let screen = sys::screen_size();
+        let bounds = crate::display::virtual_bounds().unwrap_or_else(|| {
+            let (w, h) = nacre_platform::sys::screen_size();
+            windows::Win32::Foundation::RECT { left: 0, top: 0, right: w, bottom: h }
+        });
+        let screen_origin = (bounds.left, bounds.top);
+        let screen = (bounds.right - bounds.left, bounds.bottom - bounds.top);
         let hwnd = CreateWindowExW(
             WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED,
             class,
             w!("abra-fx"),
             WS_POPUP,
-            0, 0, screen.0, screen.1,
+            screen_origin.0, screen_origin.1, screen.0, screen.1,
             None, None, Some(hi), None,
         )?;
             let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
@@ -159,6 +165,7 @@ pub fn init(host: &Host) -> windows_core::Result<()> {
                 comp: host.compositor.clone(),
                 gfx,
                 surface,
+                screen_origin,
                 screen,
                 snap: None,
                 parked: Vec::new(),
@@ -242,7 +249,7 @@ fn flag(h: isize) {
     }
 }
 
-fn openable(h: isize, screen: (i32, i32)) -> bool {
+fn openable(h: isize) -> bool {
     if !eligible(h) || enumerate::cloaked(h) || park::is_parked(h) {
         return false;
     }
@@ -256,7 +263,13 @@ fn openable(h: isize, screen: (i32, i32)) -> bool {
         }
     }
     match snapshot::frame_rect(h) {
-        Some((x, y, w, hh)) => w >= 120 && hh >= 80 && !(w >= screen.0 && hh >= screen.1) && x > -2000 && y > -2000,
+        Some((x, y, w, hh)) => {
+            let monitor = crate::display::monitor_bounds_for_window(h);
+            let fills_monitor = monitor.is_some_and(|r| {
+                x <= r.left + 2 && y <= r.top + 2 && w >= r.right - r.left - 4 && hh >= r.bottom - r.top - 4
+            });
+            w >= 120 && hh >= 80 && !fills_monitor && x > -2000 && y > -2000
+        }
         None => false,
     }
 }
@@ -353,13 +366,17 @@ impl Fx {
     }
 
     fn play(&mut self, surface: CompositionDrawingSurface, a: (i32, i32, i32, i32), b: (i32, i32, i32, i32), kind: Kind) {
+        let localize = |(x, y, w, h): (i32, i32, i32, i32)| {
+            (x - self.screen_origin.0, y - self.screen_origin.1, w, h)
+        };
+        let (a, b) = (localize(a), localize(b));
         if matches!(kind, Kind::Minimize | Kind::Restore) && genie_on() {
             let (win, icon) = if kind == Kind::Restore { (b, a) } else { (a, b) };
             match self.play_genie(surface, win, icon, kind == Kind::Restore) {
                 Ok(()) => {
                     log::line("fx", &format!("animasi {} genie ({} ms) jendela {win:?} ikon {icon:?}", if kind == Kind::Restore { "restore" } else { "minimize" }, kind.ms()));
                     unsafe {
-                        let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, self.screen.0, self.screen.1, SWP_NOACTIVATE);
+                        let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), self.screen_origin.0, self.screen_origin.1, self.screen.0, self.screen.1, SWP_NOACTIVATE);
                         let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                         SetTimer(Some(self.hwnd), T_HIDE, START_DELAY + kind.ms() + 80, None);
                     }
@@ -443,7 +460,7 @@ impl Fx {
             self.sprite = Some(sprite);
             log::line("fx", &format!("animasi {} ({ms} ms) dari {a:?} ke {b:?}", match kind { Kind::Minimize => "minimize", Kind::Restore => "restore", Kind::Close => "tutup", Kind::Open => "buka" }));
             unsafe {
-                let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, self.screen.0, self.screen.1, SWP_NOACTIVATE);
+                let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), self.screen_origin.0, self.screen_origin.1, self.screen.0, self.screen.1, SWP_NOACTIVATE);
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 SetTimer(Some(self.hwnd), T_HIDE, START_DELAY + ms + 80, None);
             }
@@ -525,7 +542,7 @@ impl Fx {
         if self.opened.contains(&h) || self.opening.as_ref().is_some_and(|o| o.hwnd == h) {
             return;
         }
-        if !openable(h, self.screen) {
+        if !openable(h) {
             return;
         }
         self.opened.insert(h);
@@ -613,7 +630,15 @@ impl Fx {
     }
 
     fn icon_rect(&self, hwnd: isize) -> (i32, i32, i32, i32) {
-        crate::dock::icon_rect_for(hwnd).unwrap_or((self.screen.0 / 2 - 24, self.screen.1 - 70, 48, 48))
+        crate::dock::icon_rect_for(hwnd).unwrap_or_else(|| {
+            let bounds = crate::display::monitor_bounds_for_window(hwnd).unwrap_or(windows::Win32::Foundation::RECT {
+                left: self.screen_origin.0,
+                top: self.screen_origin.1,
+                right: self.screen_origin.0 + self.screen.0,
+                bottom: self.screen_origin.1 + self.screen.1,
+            });
+            ((bounds.left + bounds.right) / 2 - 24, bounds.bottom - 70, 48, 48)
+        })
     }
 
     fn on_event(&mut self, event: u32, h: isize) {
@@ -640,7 +665,7 @@ impl Fx {
                 if let Some(s) = &self.snap {
                     if s.hwnd == h && self.pending_restore.is_none() {
                         let (surface, rect) = (s.surface.clone(), s.rect);
-                        crate::dock::reveal_for(START_DELAY + Kind::Minimize.ms() + 450);
+                        crate::dock::reveal_for(h, START_DELAY + Kind::Minimize.ms() + 450);
                         let icon = self.icon_rect(h);
                         let keep = s.clone();
                         self.play(surface, rect, icon, Kind::Minimize);

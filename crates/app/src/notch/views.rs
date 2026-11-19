@@ -210,10 +210,10 @@ fn privacy_dots(p: &mut Painter, c: &ContainerVisual, f: Frame, (mic, cam): (boo
 }
 
 pub(super) fn count_text(n: usize) -> String {
-    if crate::prefs::get().lang == nacre_core::i18n::Lang::En {
-        format!("{n} {}", if n == 1 { "file" } else { "files" })
-    } else {
-        format!("{n} berkas")
+    match crate::prefs::get().lang {
+        nacre_core::i18n::Lang::Id => format!("{n} berkas"),
+        nacre_core::i18n::Lang::En => format!("{n} {}", if n == 1 { "file" } else { "files" }),
+        nacre_core::i18n::Lang::Es => format!("{n} {}", if n == 1 { "archivo" } else { "archivos" }),
     }
 }
 
@@ -802,11 +802,11 @@ fn timer_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h: f
 fn calendar_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h: f32, d: &Data, regions: &mut Vec<Region>) {
     use nacre_core::island::calendar::{add_days, month_short, weekday, weekday_short};
     card(p, c, x, y, w, h);
-    let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+    let lang = crate::prefs::get().lang;
     let cal = &d.cal;
     let accent = crate::prefs::accent();
     let (sy, sm, sd) = cal.sel;
-    p.text(c, month_short(sm, en), x + p.px(16.0), y + p.px(12.0), 18.0, 700, WHITE, 1.0, Anchor::Left, p.px(60.0));
+    p.text(c, month_short(sm, lang), x + p.px(16.0), y + p.px(12.0), 18.0, 700, WHITE, 1.0, Anchor::Left, p.px(60.0));
     p.text(c, &sy.to_string(), x + p.px(16.0), y + p.px(36.0), 11.0, 500, WHITE, 0.45, Anchor::Left, p.px(60.0));
     let (left, right) = (x + p.px(70.0), x + w - p.px(10.0));
     let cell = (right - left) / 5.0;
@@ -816,7 +816,7 @@ fn calendar_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h
         let cx = left + cell * (i + 2) as f32 + cell / 2.0;
         let selected = i == 0;
         let today = (yy, mm, dd) == cal.today;
-        let wd = weekday_short(weekday(yy, mm, dd), en);
+        let wd = weekday_short(weekday(yy, mm, dd), lang);
         let n0 = kids(c);
         p.text(c, wd, cx, wy, 9.0, 600, if selected { accent } else { WHITE }, if selected { 1.0 } else { 0.4 }, Anchor::Center, cell);
         if selected {
@@ -837,8 +837,11 @@ fn calendar_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h
         Events::List(list) => {
             let e = &list[0];
             let when = match e.minute {
-                Some(m) if crate::prefs::get().clock_24h => format!("{:02}.{:02}  ", m / 60, m % 60),
-                Some(m) => format!("{}.{:02} {}  ", (m / 60 + 11) % 12 + 1, m % 60, if m < 720 { "AM" } else { "PM" }),
+                Some(m) if crate::prefs::get().clock_24h => {
+                    let separator = if crate::prefs::get().lang == nacre_core::i18n::Lang::Id { '.' } else { ':' };
+                    format!("{:02}{separator}{:02}  ", m / 60, m % 60)
+                }
+                Some(m) => format!("{}:{:02} {}  ", (m / 60 + 11) % 12 + 1, m % 60, nacre_core::i18n::day_period(crate::prefs::get().lang, m / 60)),
                 None => String::new(),
             };
             let more = if list.len() > 1 { format!("  +{}", list.len() - 1) } else { String::new() };

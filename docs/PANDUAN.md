@@ -286,7 +286,7 @@ Jendela Pengaturan ABRA bergaya panel pengaturan modern: sidebar berikon warna d
 
 | Halaman | Isi |
 |---|---|
-| **Umum** | Bahasa (Indonesia/English), jalankan saat login, sembunyikan taskbar Windows, sembunyikan ikon desktop, selalu di atas jendela layar penuh, animasi jendela, bayangan jendela aktif |
+| **Umum** | Bahasa (Indonesia/English/Español), jalankan saat login, sembunyikan taskbar Windows, sembunyikan ikon desktop, selalu di atas jendela layar penuh, animasi jendela, bayangan jendela aktif |
 | **Deck** | Aktifkan Deck, perilaku, ikon seragam, ukuran ikon, jarak, zoom, jarak dari tepi, kebulatan sudut |
 | **Visor** | Aktifkan Visor, perilaku, kebulatan sudut, buka otomatis saat kursor di Visor |
 | **Rail** | Aktifkan Rail, latar (Transparan, Terang, Gelap, Material), jam 24 jam |

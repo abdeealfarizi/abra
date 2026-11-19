@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use windows::core::w;
 use windows::UI::Color;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor, ContainerVisual, SpriteVisual};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_BACK, VK_ESCAPE};
@@ -151,6 +151,7 @@ struct Cc {
     track: Option<(String, String, bool, bool)>,
     art: Option<Bitmap>,
     cache: HashMap<String, (CompositionDrawingSurface, i32, i32)>,
+    screen_bounds: RECT,
     top: i32,
     intro: bool,
     intro_items: Vec<(ContainerVisual, Vector3, u32)>,
@@ -182,6 +183,9 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(ctl_proc), hInstance: hi, lpszClassName: class, ..Default::default() });
         let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("abra-cc-ctl"), WS_POPUP, 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(hi), None)?;
         let (layout, sizes) = controls::from_text_sized(&std::fs::read_to_string(layout_file()).unwrap_or_default());
+        let screen_bounds = crate::display::monitors().into_iter().find(|m| m.primary)
+            .map(|m| m.rect)
+            .unwrap_or_else(|| { let (right, bottom) = nacre_platform::sys::screen_size(); RECT { left: 0, top: 0, right, bottom } });
         CC.with(|c| {
             *c.borrow_mut() = Some(Cc {
                 ctl: hwnd,
@@ -202,6 +206,7 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
                 track: None,
                 art: None,
                 cache: HashMap::new(),
+                screen_bounds,
                 top: 30,
                 intro: false,
                 intro_items: Vec::new(),
@@ -214,18 +219,19 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
     Ok(())
 }
 
-pub fn toggle(top: i32) {
+pub fn toggle_at(top: i32, bounds: RECT) {
     let open = with(|c| c.panel.is_some() && !c.closing).unwrap_or(false);
     if open {
         close();
     } else {
+        crate::hud::hide_osd();
         with(|c| {
             c.finish_close();
+            c.screen_bounds = bounds;
             c.open(top)
         });
     }
 }
-
 pub fn is_open() -> bool {
     with(|c| c.panel.is_some() && !c.closing).unwrap_or(false)
 }
@@ -545,6 +551,10 @@ impl Cc {
             None => {
                 let base = GlassParams::dark((10.0, 10.0), 0.0);
                 let Ok(popup) = Popup::new(&self.comp, w!("AbraControlCenter"), Some(panel_proc), WINDOW_EX_STYLE(0), base) else { return };
+                unsafe {
+                    let _ = SetWindowPos(popup.hwnd, None, self.screen_bounds.left, self.screen_bounds.top, 1, 1,
+                        SWP_NOACTIVATE | SWP_NOZORDER);
+                }
                 dpi = unsafe { GetDpiForWindow(popup.hwnd) }.max(96) as f32 / 96.0 * prefs::ui_scale();
                 popup
             }
@@ -559,10 +569,10 @@ impl Cc {
         let inuse = if self.edit { Vec::new() } else { nacre_platform::privacy::active() };
         let top = if inuse.is_empty() { 0.0 } else { 36.0 * dpi };
         let (pw, ph) = (gw, top + gh + 14.0 * dpi + btn_h + 4.0 * dpi);
-        let (sw, _) = nacre_platform::sys::screen_size();
-        let x = (sw as f32 - pw - 10.0 * dpi) as i32;
-        let y = self.top + (6.0 * dpi) as i32;
         let m = (8.0 * dpi).round();
+        let x = (self.screen_bounds.right as f32 - pw - 10.0 * dpi) as i32;
+        let wanted_y = self.top + (6.0 * dpi) as i32;
+        let y = wanted_y.min(self.screen_bounds.bottom - (ph + 2.0 * m) as i32).max(self.screen_bounds.top);
         PAD.store(m.to_bits(), std::sync::atomic::Ordering::Relaxed);
         let _ = popup.set_rect(x - m as i32, y - m as i32, (pw + 2.0 * m).ceil() as i32, (ph + 2.0 * m).ceil() as i32);
         let _ = popup.panel.set_rect(0.0, 0.0, 0.0, 0.0);
@@ -1062,10 +1072,16 @@ impl Cc {
         let (rect, dpi, hwnd) = (p.popup.rect, p.dpi, p.popup.hwnd);
         let Some(gfx) = self.gfx.as_ref() else { return };
         if self.menu.is_none() {
-            match Menu::new(&self.comp, hwnd, dpi, nacre_platform::sys::screen_size(), Tier::Full) {
+            match Menu::new(&self.comp, hwnd, dpi, (self.screen_bounds.right - self.screen_bounds.left, self.screen_bounds.bottom - self.screen_bounds.top), Tier::Full) {
                 Ok(m) => self.menu = Some(m),
                 Err(_) => return,
             }
+        }
+        if let Some(menu) = self.menu.as_mut() {
+            menu.set_bounds(
+                (self.screen_bounds.left, self.screen_bounds.top),
+                (self.screen_bounds.right - self.screen_bounds.left, self.screen_bounds.bottom - self.screen_bounds.top),
+            );
         }
         let mk = |id: usize, label: &'static str, s: Size| MItem::action(id, &format!("{}{}", if cur == s { "\u{2713} " } else { "" }, prefs::tr(label)), true);
         let items = vec![mk(1, "Kecil", Size::S), mk(2, "Sedang", Size::M), mk(3, "Besar", Size::L)];

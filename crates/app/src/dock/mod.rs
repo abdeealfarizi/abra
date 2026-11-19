@@ -22,7 +22,7 @@ use menu::{Menu, MENU_CLOSE, MENU_PICK};
 use preview::{Preview, PREVIEW_CLICK, PREVIEW_ENTER, PREVIEW_LEAVE};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use crate::strip::Strip;
 use tooltip::Tooltip;
@@ -66,7 +66,7 @@ const TRASH_POLL_MS: u32 = 4000;
 const WM_DISPLAYCHANGE: u32 = 0x007E;
 const WM_DPICHANGED: u32 = 0x02E0;
 
-static DOCK_HWND: AtomicIsize = AtomicIsize::new(0);
+static DOCKS: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
 static BUSY: AtomicBool = AtomicBool::new(false);
 
 const CMD_OPEN: usize = 1;
@@ -92,6 +92,8 @@ fn downloads_key() -> String {
 
 pub struct Options {
     pub appbar: bool,
+    pub monitor: crate::display::Monitor,
+    pub monitor_index: u8,
     pub mode: Mode,
     pub glass: Option<Tier>,
 }
@@ -142,6 +144,8 @@ pub struct Dock {
     dpi: f32,
     m: Metrics,
     screen: (i32, i32),
+    screen_origin: (i32, i32),
+    monitor_index: u8,
     win: (i32, i32),
     win_pos: (i32, i32),
     card_y: f32,
@@ -228,35 +232,38 @@ fn kill(hwnd: HWND, id: usize) {
 }
 
 pub fn request_appbar_resync() {
-    let h = DOCK_HWND.load(Ordering::Relaxed);
-    if h != 0 {
-        unsafe {
-            let _ = PostMessageW(Some(HWND(h as *mut _)), WM_APPBAR_SYNC, WPARAM(0), LPARAM(0));
-        }
+    for h in DOCKS.lock().unwrap_or_else(|e| e.into_inner()).iter().copied() {
+        unsafe { let _ = PostMessageW(Some(HWND(h as *mut _)), WM_APPBAR_SYNC, WPARAM(0), LPARAM(0)); }
     }
 }
 
 fn on_windows_changed() {
-    let h = DOCK_HWND.load(Ordering::Relaxed);
-    if h != 0 {
+    for h in DOCKS.lock().unwrap_or_else(|e| e.into_inner()).iter().copied() {
         timer(HWND(h as *mut _), TIMER_WINDOWS, 120);
     }
 }
 
-pub fn reveal_for(ms: u32) {
-    let h = HWND(DOCK_HWND.load(Ordering::Relaxed) as *mut _);
-    with_dock(h, |d| {
-        d.revealing = true;
-        d.update_visibility();
-        timer(d.hwnd, TIMER_REVEAL, ms);
-    });
+pub fn reveal_for(hwnd: isize, ms: u32) {
+    let handles = DOCKS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for raw in handles {
+        let h = HWND(raw as *mut _);
+        let revealed = with_dock(h, |d| {
+            if d.icon_rect(hwnd).is_none() {
+                return false;
+            }
+            d.revealing = true;
+            d.update_visibility();
+            timer(d.hwnd, TIMER_REVEAL, ms);
+            true
+        }).unwrap_or(false);
+        if revealed { break; }
+    }
 }
 
 pub fn icon_rect_for(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
-    let h = HWND(DOCK_HWND.load(Ordering::Relaxed) as *mut _);
-    with_dock(h, |d| d.icon_rect(hwnd)).flatten()
+    let handles = DOCKS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    handles.into_iter().find_map(|raw| with_dock(HWND(raw as *mut _), |d| d.icon_rect(hwnd)).flatten())
 }
-
 pub fn cli_commands(hwnd: HWND, add: Option<String>, icon: Option<(String, String)>) {
     with_dock(hwnd, |d| {
         if let Some(p) = add {
@@ -303,11 +310,13 @@ impl Dock {
                 class,
                 w!("nacre-dock"),
                 WS_POPUP,
-                0, 0, 400, 120,
+                opts.monitor.rect.left, opts.monitor.rect.top, 400, 120,
                 None, None, Some(hi), None,
             )?;
             let dpi = GetDpiForWindow(hwnd).max(96) as f32 / 96.0 * crate::prefs::ui_scale();
-            let screen = sys::screen_size();
+            let screen = (opts.monitor.width(), opts.monitor.height());
+            let screen_origin = (opts.monitor.rect.left, opts.monitor.rect.top);
+            let monitor_index = opts.monitor_index;
             let m = metrics_from_prefs(dpi);
 
             let surface = host.attach(hwnd, (400.0, 120.0))?;
@@ -360,12 +369,14 @@ impl Dock {
                 dpi,
                 m,
                 screen,
+                screen_origin,
+                monitor_index,
                 win: (400, 120),
                 win_pos: (0, 0),
                 card_y: 0.0,
                 card_h: 0.0,
                 margin: 8.0 * dpi,
-                off: !crate::prefs::get().dock_enabled,
+                off: { let s = crate::prefs::get(); !s.dock_enabled || (s.dock_monitor != u8::MAX && s.dock_monitor != monitor_index) },
                 icon_px: px,
                 icon_y: 0.0,
                 dot_y: 0.0,
@@ -418,7 +429,7 @@ impl Dock {
             let _ = dock.stage.SetOffset(Vector3 { X: 0.0, Y: dock.win.1 as f32 + 8.0, Z: 0.0 });
             let appbar = dock.opts.appbar;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(dock) as isize);
-            DOCK_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
+            DOCKS.lock().unwrap_or_else(|e| e.into_inner()).push(hwnd.0 as isize);
             windows::Win32::UI::Shell::DragAcceptFiles(hwnd, true);
             crate::prefs::listen(hwnd);
             tracker::install(on_windows_changed);
@@ -426,7 +437,7 @@ impl Dock {
             with_dock(hwnd, |d| {
                 d.animate_stage(0.0);
                 d.sync_strip();
-                if appbar {
+                if appbar && !d.off {
                     d.reserve_strip();
                 }
             });
@@ -470,7 +481,7 @@ impl Dock {
         let need = self.max_content_width() + 2.0 * self.pad_side + 40.0 * self.dpi;
         let w = (need.ceil() as i32).clamp(200, self.screen.0);
         self.win.0 = w;
-        self.win_pos = ((self.screen.0 - w) / 2, self.screen.1 - self.win.1);
+        self.win_pos = (self.screen_origin.0 + (self.screen.0 - w) / 2, self.screen_origin.1 + self.screen.1 - self.win.1);
         unsafe {
             let _ = SetWindowPos(self.hwnd, None, self.win_pos.0, self.win_pos.1, w, self.win.1, SWP_NOACTIVATE | SWP_NOZORDER);
         }
@@ -483,9 +494,10 @@ impl Dock {
     }
 
     fn on_reconfigure(&mut self) {
-        let screen = sys::screen_size();
+        let screen = (self.opts.monitor.width(), self.opts.monitor.height());
+        let origin = (self.opts.monitor.rect.left, self.opts.monitor.rect.top);
         let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96) as f32 / 96.0 * crate::prefs::ui_scale();
-        if screen == self.screen && (dpi - self.dpi).abs() < 0.01 {
+        if screen == self.screen && origin == self.screen_origin && (dpi - self.dpi).abs() < 0.01 {
             return;
         }
         log::line("dock", &format!("reconfigurasi {}x{}@{} → {}x{}@{}", self.screen.0, self.screen.1, self.dpi, screen.0, screen.1, dpi));
@@ -493,6 +505,7 @@ impl Dock {
         self.tooltip = None;
         self.preview = None;
         self.screen = screen;
+        self.screen_origin = origin;
         self.dpi = dpi;
         self.m = metrics_from_prefs(dpi);
         self.pad_side = 10.0 * dpi;
@@ -544,7 +557,7 @@ impl Dock {
         }
         let d = self.dpi;
         let strip = (self.margin + self.card_h + 4.0 * d).ceil() as i32;
-        let r = nacre_platform::shell::appbar::reserve_bottom(self.hwnd, self.screen.0, self.screen.1, strip);
+        let r = nacre_platform::shell::appbar::reserve_bottom(self.hwnd, windows::Win32::Foundation::RECT { left: self.screen_origin.0, top: self.screen_origin.1, right: self.screen_origin.0 + self.screen.0, bottom: self.screen_origin.1 + self.screen.1 }, strip);
         log::line("appbar", &format!("strip={strip} hasil={r:?}"));
     }
 
@@ -579,7 +592,7 @@ impl Dock {
 
     fn place_strip(&self) {
         if let Some(s) = &self.strip {
-            s.place(self.win_pos.0, self.screen.1 - 2, self.win.0, 2);
+            s.place(self.win_pos.0, self.screen_origin.1 + self.screen.1 - 2, self.win.0, 2);
         }
     }
 
@@ -638,19 +651,27 @@ impl Dock {
     }
 
     pub fn refresh_windows(&mut self) {
-        let wins = enumerate::list(std::process::id());
+        let all_wins = enumerate::list(std::process::id());
+        let open_keys: HashSet<String> = all_wins.iter().map(|w| key_of(&w.path)).collect();
+        let bounds = windows::Win32::Foundation::RECT {
+            left: self.screen_origin.0,
+            top: self.screen_origin.1,
+            right: self.screen_origin.0 + self.screen.0,
+            bottom: self.screen_origin.1 + self.screen.1,
+        };
+        let wins: Vec<_> = all_wins.into_iter().filter(|w| crate::display::window_is_on(w.hwnd, bounds)).collect();
         tracker::prune(focus::is_alive);
         let mut items = merge(&self.pins, &wins, &tracker::recent, &mut self.seen);
         self.heal_pins(&mut items);
         self.track_recents(&items);
-        self.append_recents(&mut items);
+        self.append_recents(&mut items, &open_keys);
         let sig: Vec<_> = items.iter().map(|i| (i.key.clone(), i.pinned, i.hwnds.len(), i.path.clone())).collect();
         self.items = items;
         if sig != self.signature {
             self.signature = sig;
             self.rebuild();
         }
-        self.overlap = overlap::evaluate(tracker::external_foreground(), std::process::id(), self.card_screen_rect(), self.screen);
+        self.overlap = overlap::evaluate_in(tracker::external_foreground(), std::process::id(), self.card_screen_rect(), windows::Win32::Foundation::RECT { left: self.screen_origin.0, top: self.screen_origin.1, right: self.screen_origin.0 + self.screen.0, bottom: self.screen_origin.1 + self.screen.1 });
         if self.overlap.fullscreen && crate::prefs::get().above_fullscreen {
             self.overlap = overlap::Overlap { overlapped: false, fullscreen: false };
         }
@@ -913,10 +934,11 @@ impl Dock {
             self.signature.clear();
             self.refresh_windows();
         }
-        if self.off == s.dock_enabled {
-            self.off = !s.dock_enabled;
+        let enabled_here = s.dock_enabled && (s.dock_monitor == u8::MAX || s.dock_monitor == self.monitor_index);
+        if self.off != !enabled_here {
+            self.off = !enabled_here;
             if self.off {
-                nacre_platform::shell::appbar::release_bottom();
+                nacre_platform::shell::appbar::release_bottom(Some(self.hwnd));
             } else if self.opts.appbar {
                 self.reserve_strip();
             }
@@ -938,7 +960,7 @@ impl Dock {
             if appbar {
                 self.reserve_strip();
             } else if was_appbar {
-                nacre_platform::shell::appbar::release_bottom();
+                nacre_platform::shell::appbar::release_bottom(Some(self.hwnd));
             }
             self.sync_strip();
             self.update_visibility();
@@ -1019,7 +1041,7 @@ impl Dock {
         };
         let Some((cx, top)) = self.icon_anchor(slot) else { return };
         if self.tooltip.is_none() {
-            self.tooltip = Tooltip::new(&self.comp, self.dpi, self.screen.0).ok().map(|mut t| {
+            self.tooltip = Tooltip::new(&self.comp, self.dpi, self.screen_origin, self.screen.0).ok().map(|mut t| {
                 t.set_tier(self.tier);
                 t
             });
@@ -1047,7 +1069,7 @@ impl Dock {
         let icon = self.surfaces.get(&it.path).cloned();
         let Some((cx, top)) = self.icon_anchor(slot) else { return };
         if self.preview.is_none() {
-            self.preview = Preview::new(&self.comp, self.hwnd, self.dpi, self.screen.0).ok().map(|mut p| {
+            self.preview = Preview::new(&self.comp, self.hwnd, self.dpi, self.screen_origin, self.screen.0).ok().map(|mut p| {
                 let _ = p.panel_mut().set_tier(self.tier);
                 p
             });
@@ -1373,6 +1395,7 @@ impl Dock {
         let bottom = self.win_pos.1 + self.card_y as i32 - (6.0 * self.dpi) as i32;
         log::line("dock", &format!("menu: kursor=({},{}) bawah={bottom} dari klik x={x}", pt.x, pt.y));
         if let Some(m) = self.menu.as_mut() {
+            m.set_bounds(self.screen_origin, self.screen);
             if let Err(e) = m.show(&self.comp, &self.gfx, items, pt.x, bottom) {
                 log::line("menu", &format!("gagal: {e}"));
                 self.on_menu_close();
@@ -1410,6 +1433,7 @@ impl Dock {
         }
         let bottom = self.win_pos.1 + self.card_y as i32 - (6.0 * self.dpi) as i32;
         if let Some(m) = self.menu.as_mut() {
+            m.set_bounds(self.screen_origin, self.screen);
             if let Err(e) = m.show(&self.comp, &self.gfx, items, pt.x, bottom) {
                 log::line("menu", &format!("gagal: {e}"));
                 self.on_menu_close();
@@ -1462,7 +1486,7 @@ impl Dock {
         }
     }
 
-    fn append_recents(&self, items: &mut Vec<Item>) {
+    fn append_recents(&self, items: &mut Vec<Item>, open_keys: &HashSet<String>) {
         if !crate::prefs::get().recent_apps {
             return;
         }
@@ -1472,7 +1496,7 @@ impl Dock {
                 break;
             }
             let k = key_of(&r.path);
-            if items.iter().any(|i| i.key == k) {
+            if open_keys.contains(&k) || items.iter().any(|i| i.key == k) {
                 continue;
             }
             items.push(Item { key: k, name: r.name.clone(), path: r.path.clone(), pinned: false, hwnds: vec![] });
@@ -1893,7 +1917,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
         }
         WM_DESTROY => {
             nacre_platform::shell::appbar::release();
-            DOCK_HWND.store(0, Ordering::Relaxed);
+            let mut docks = DOCKS.lock().unwrap_or_else(|e| e.into_inner());
+            docks.retain(|h| *h != hwnd.0 as isize);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),

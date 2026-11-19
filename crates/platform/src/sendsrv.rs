@@ -1,3 +1,4 @@
+use nacre_core::i18n::Lang;
 use nacre_core::notch::send::{ascii_name, is_private, page, pct, token, url};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -111,7 +112,7 @@ fn respond(s: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) {
     let _ = s.write_all(body);
 }
 
-fn serve(mut s: TcpStream, tok: &str, sh: &Shared, en: bool) {
+fn serve(mut s: TcpStream, tok: &str, sh: &Shared, lang: Lang) {
     let _ = s.set_write_timeout(Some(Duration::from_secs(30)));
     let Ok(clone) = s.try_clone() else { return };
     let mut r = BufReader::new(Deadline(clone, Instant::now() + Duration::from_secs(10)).take(MAX_HEAD));
@@ -144,7 +145,7 @@ fn serve(mut s: TcpStream, tok: &str, sh: &Shared, en: bool) {
     let base = format!("/{tok}/");
     if path == format!("/{tok}") || path == base {
         let list: Vec<(String, u64)> = sh.files.iter().map(|f| (f.1.clone(), f.2)).collect();
-        respond(&mut s, "200 OK", "text/html; charset=utf-8", page(tok, &list, en).as_bytes());
+                respond(&mut s, "200 OK", "text/html; charset=utf-8", page(tok, &list, lang).as_bytes());
         return;
     }
     let Some(i) = path.strip_prefix(&format!("{base}f/")).and_then(|n| n.parse::<usize>().ok()).filter(|i| *i < sh.files.len()) else {
@@ -187,7 +188,7 @@ fn serve(mut s: TcpStream, tok: &str, sh: &Shared, en: bool) {
     sh.report(true);
 }
 
-pub fn start(paths: &[String], en: bool, notify: impl Fn() + Send + Sync + 'static) -> Result<Server, String> {
+pub fn start(paths: &[String], lang: Lang, notify: impl Fn() + Send + Sync + 'static) -> Result<Server, String> {
     let files: Vec<(String, String, u64)> = paths
         .iter()
         .filter_map(|p| {
@@ -224,7 +225,7 @@ pub fn start(paths: &[String], en: bool, notify: impl Fn() + Send + Sync + 'stat
             let (sh, tok) = (sh.clone(), tok.clone());
             let _ = std::thread::Builder::new().spawn(move || {
                 let _slot = slot;
-                serve(c, &tok, &sh, en)
+                serve(c, &tok, &sh, lang)
             });
         }
     });
@@ -240,7 +241,7 @@ mod tests {
         std::env::set_var("NACRE_SEND_LOOPBACK", "1");
         let p = std::env::temp_dir().join(format!("nacre-send-{tag}-{}.txt", std::process::id()));
         std::fs::write(&p, b"halo").unwrap();
-        start(&[p.to_string_lossy().to_string()], true, || {}).unwrap()
+        start(&[p.to_string_lossy().to_string()], Lang::En, || {}).unwrap()
     }
 
     fn ask(addr: SocketAddr, req: &[u8]) -> String {

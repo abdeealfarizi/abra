@@ -38,7 +38,7 @@ pub fn should_hide(mode: Mode, i: &Inputs) -> bool {
     }
     match mode {
         Mode::Always => false,
-        Mode::AutoHide => i.overlapped && !i.interacting && !i.edge_armed,
+        Mode::AutoHide => !i.interacting && !i.edge_armed,
         Mode::OnDemand => !i.interacting && !i.edge_armed,
     }
 }
@@ -58,11 +58,11 @@ mod tests {
     }
 
     #[test]
-    fn autohide_hides_only_when_overlapped_and_idle() {
-        assert!(!should_hide(Mode::AutoHide, &i()));
+    fn autohide_stays_hidden_until_hover_or_interaction() {
+        assert!(should_hide(Mode::AutoHide, &i()));
         assert!(should_hide(Mode::AutoHide, &Inputs { overlapped: true, ..i() }));
-        assert!(!should_hide(Mode::AutoHide, &Inputs { overlapped: true, interacting: true, ..i() }));
-        assert!(!should_hide(Mode::AutoHide, &Inputs { overlapped: true, edge_armed: true, ..i() }));
+        assert!(!should_hide(Mode::AutoHide, &Inputs { interacting: true, ..i() }));
+        assert!(!should_hide(Mode::AutoHide, &Inputs { edge_armed: true, ..i() }));
     }
 
     #[test]

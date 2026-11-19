@@ -19,7 +19,7 @@ use windows::UI::Color;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionObject, CompositionStretch, Compositor, ContainerVisual, InsetClip};
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
 use windows_core::{Interface, HSTRING};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -107,7 +107,6 @@ struct Spot {
     gfx: Gfx,
     comp: Compositor,
     dpi: f32,
-    screen: (i32, i32),
     mode: Mode,
     query: String,
     rows: Vec<Row>,
@@ -304,7 +303,25 @@ pub fn toggle() {
     toggle_mode(Mode::Search)
 }
 
+pub fn toggle_at(bounds: RECT) {
+    toggle_mode_at(Mode::Search, bounds);
+}
+
 pub fn toggle_mode(mode: Mode) {
+    toggle_mode_at(mode, default_bounds());
+}
+
+fn default_bounds() -> RECT {
+    let foreground = unsafe { GetForegroundWindow() };
+    crate::display::monitor_bounds_for_window(foreground.0 as isize)
+        .or_else(|| crate::display::monitors().into_iter().find(|m| m.primary).map(|m| m.rect))
+        .unwrap_or_else(|| {
+            let (right, bottom) = sys::screen_size();
+            RECT { left: 0, top: 0, right, bottom }
+        })
+}
+
+fn toggle_mode_at(mode: Mode, bounds: RECT) {
     let open_mode = SPOT.with(|c| c.borrow().as_ref().map(|s| s.mode));
     match open_mode {
         Some(m) if m == mode => {
@@ -319,7 +336,7 @@ pub fn toggle_mode(mode: Mode) {
     }
     let comp = CTL.with(|c| c.borrow().as_ref().map(|c| c.comp.clone()));
     let Some(comp) = comp else { return };
-    match create(&comp, mode) {
+    match create(&comp, mode, bounds) {
         Ok(s) => {
             SPOT.with(|c| *c.borrow_mut() = Some(s));
             with_spot(|s| {
@@ -369,10 +386,15 @@ fn finish_closing() {
     }
 }
 
-fn create(comp: &Compositor, mode: Mode) -> windows_core::Result<Box<Spot>> {
-    let screen = sys::screen_size();
+fn create(comp: &Compositor, mode: Mode, bounds: RECT) -> windows_core::Result<Box<Spot>> {
+    let screen_origin = (bounds.left, bounds.top);
+    let screen = (bounds.right - bounds.left, bounds.bottom - bounds.top);
     let glass = prefs::glass((10.0, 10.0), 27.0, prefs::Role::Dock);
     let mut popup = Popup::new_with(comp, w!("AbraSpotlight"), Some(spot_proc), WINDOW_EX_STYLE(0), glass, true)?;
+    unsafe {
+        let _ = SetWindowPos(popup.hwnd, None, screen_origin.0, screen_origin.1, 1, 1,
+            SWP_NOACTIVATE | SWP_NOZORDER);
+    }
     let dpi = unsafe { GetDpiForWindow(popup.hwnd) }.max(96) as f32 / 96.0;
     let tier = {
         let c = sys::conditions();
@@ -380,7 +402,7 @@ fn create(comp: &Compositor, mode: Mode) -> windows_core::Result<Box<Spot>> {
     };
     let _ = popup.panel.set_tier(tier);
     let g = geo(dpi, screen);
-    popup.set_rect(g.win.0, g.win.1, g.win.2, g.win.3)?;
+    popup.set_rect(screen_origin.0 + g.win.0, screen_origin.1 + g.win.1, g.win.2, g.win.3)?;
     let idle: Rect = ((g.gw - g.ws) / 2.0, 0.0, g.ws, g.h);
     popup.panel.set_rect(idle.0, idle.1, idle.2, idle.3)?;
     popup.panel.set_radius(g.h / 2.0)?;
@@ -399,7 +421,6 @@ fn create(comp: &Compositor, mode: Mode) -> windows_core::Result<Box<Spot>> {
         gfx,
         comp: comp.clone(),
         dpi,
-        screen,
         mode: Mode::Search,
         query: String::new(),
         rows: vec![],
@@ -1484,9 +1505,10 @@ fn clip_time(at: i64) -> String {
     let t = (now_secs - age).rem_euclid(86_400);
     let (h, m) = ((t / 3600) as u32, ((t % 3600) / 60) as u32);
     if prefs::get().clock_24h {
-        format!("{h:02}.{m:02}")
+        let separator = if prefs::get().lang == nacre_core::i18n::Lang::Id { '.' } else { ':' };
+        format!("{h:02}{separator}{m:02}")
     } else {
-        format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
+        format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, nacre_core::i18n::day_period(crate::prefs::get().lang, h))
     }
 }
 

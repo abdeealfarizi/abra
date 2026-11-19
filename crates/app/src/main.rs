@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod controlcenter;
+mod display;
 mod dock;
 mod fx;
 mod hud;
@@ -156,24 +157,37 @@ fn main() {
     }
 
     if !args.no_dock {
-        let created = dock::Dock::create(&host, main_hwnd, dock::Options {
-            appbar: args.appbar || (args.dock_mode.is_none() && pref.dock.reserves()),
-            mode: args.dock_mode.unwrap_or(pref.dock.mode()),
-            glass: args.glass,
-        });
-        match created {
-            Ok(h) => dock::cli_commands(h, args.add_app.clone(), args.set_icon.clone()),
-            Err(e) => log::line("dock", &format!("gagal dibuat: {e}")),
+        let mut first_dock = true;
+        for (index, monitor) in display::monitors().into_iter().enumerate() {
+            let created = dock::Dock::create(&host, main_hwnd, dock::Options {
+                appbar: args.appbar || (args.dock_mode.is_none() && pref.dock.reserves()),
+                monitor,
+                monitor_index: index.min(u8::MAX as usize) as u8,
+                mode: args.dock_mode.unwrap_or(pref.dock.mode()),
+                glass: args.glass,
+            });
+            match created {
+                Ok(h) => {
+                    dock::cli_commands(h, if first_dock { args.add_app.clone() } else { None }, args.set_icon.clone());
+                    first_dock = false;
+                },
+                Err(e) => log::line("dock", &format!("gagal dibuat: {e}")),
+            }
         }
     }
 
     if !args.no_island {
-        if let Err(e) = notch::Notch::create(&host, notch::Options {
+        for (index, monitor) in display::monitors().into_iter().enumerate() {
+            let selected = pref.notch_monitor == u8::MAX || pref.notch_monitor == index as u8;
+            if let Err(e) = notch::Notch::create(&host, notch::Options {
                 glass: args.glass,
+                monitor,
+                monitor_index: index.min(u8::MAX as usize) as u8,
                 mode: args.island_mode.unwrap_or(pref.notch.mode()),
-                reserve: args.island_mode.is_none() && pref.notch.reserves(),
+                reserve: selected && args.island_mode.is_none() && pref.notch.reserves() && pref.notch_enabled && !pref.menubar,
             }) {
-            log::line("notch", &format!("gagal dibuat: {e}"));
+                log::line("notch", &format!("gagal dibuat: {e}"));
+            }
         }
     }
 

@@ -22,7 +22,7 @@ use nacre_ui::gfx::Gfx;
 use nacre_ui::glass::Tier;
 use nacre_ui::host::{Host, Surface};
 use shadow::Shadow;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use views::{Action, Data, Frame, LyrState, LyricsView, MediaView, Region};
 use windows::core::w;
@@ -91,11 +91,13 @@ const WIN_W: f32 = 640.0;
 const WIN_H: f32 = 222.0;
 const SHADOW_PAD: f32 = 36.0;
 
-static NOTCH_HWND: AtomicIsize = AtomicIsize::new(0);
+static NOTCHS: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
 static BUSY: AtomicBool = AtomicBool::new(false);
 
 pub struct Options {
     pub glass: Option<Tier>,
+    pub monitor: crate::display::Monitor,
+    pub monitor_index: u8,
     pub mode: Vis,
     pub reserve: bool,
 }
@@ -163,10 +165,8 @@ fn post_w(hwnd: isize, msg: u32, w: usize) {
 }
 
 fn on_windows_changed() {
-    let h = NOTCH_HWND.load(Ordering::Relaxed);
-    if h != 0 {
-        timer(HWND(h as *mut _), T_WINCHG, 150);
-    }
+    let handles = NOTCHS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for raw in handles { timer(HWND(raw as *mut _), T_WINCHG, 150); }
 }
 
 fn auto_tier(over: Option<Tier>) -> Tier {
@@ -203,6 +203,9 @@ pub struct Notch {
     dpi: f32,
     win: (i32, i32),
     screen_w: i32,
+    screen_origin: (i32, i32),
+    monitor_index: u8,
+    monitor: crate::display::Monitor,
 
     mode: Mode,
     look: Look,
@@ -293,13 +296,15 @@ impl Notch {
                 class,
                 w!("abra-notch"),
                 WS_POPUP,
-                0, 0, 400, 200,
+                opts.monitor.rect.left, opts.monitor.rect.top, 400, 200,
                 None, None, Some(hi), None,
             )?;
             let dpi = GetDpiForWindow(hwnd).max(96) as f32 / 96.0 * crate::prefs::ui_scale();
-            let screen_w = sys::screen_size().0;
+            let screen_w = opts.monitor.width();
+            let screen_origin = (opts.monitor.rect.left, opts.monitor.rect.top);
+            let monitor_index = opts.monitor_index;
             let win = win_size(dpi, screen_w);
-            let _ = SetWindowPos(hwnd, None, (screen_w - win.0) / 2, 0, win.0, win.1, SWP_NOACTIVATE | SWP_NOZORDER);
+            let _ = SetWindowPos(hwnd, None, screen_origin.0 + (screen_w - win.0) / 2, screen_origin.1, win.0, win.1, SWP_NOACTIVATE | SWP_NOZORDER);
             let comp = host.compositor.clone();
             let surface = host.attach(hwnd, (win.0 as f32, win.1 as f32))?;
             let tier = auto_tier(opts.glass);
@@ -323,6 +328,9 @@ impl Notch {
                 dpi,
                 win,
                 screen_w,
+                screen_origin,
+                monitor_index,
+                monitor: opts.monitor,
                 mode: Mode::Rest,
                 look: rest,
                 size: state::size(rest, dpi),
@@ -394,7 +402,7 @@ impl Notch {
                 app_icons: std::collections::HashMap::new(),
                 vis: opts.mode,
                 reserved: false,
-                off: !crate::prefs::get().notch_enabled,
+                off: { let s = crate::prefs::get(); !s.notch_enabled || (s.notch_monitor != u8::MAX && s.notch_monitor != monitor_index) },
                 shown: true,
                 starting: true,
                 overlap: overlap::Overlap::default(),
@@ -406,7 +414,7 @@ impl Notch {
             });
             n.refresh();
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(n) as isize);
-            NOTCH_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
+            NOTCHS.lock().unwrap_or_else(|e| e.into_inner()).push(hwnd.0 as isize);
             crate::services::register_island(hwnd);
             tracker::install(on_windows_changed);
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -468,9 +476,9 @@ impl Notch {
             return;
         }
         self.send = None;
-        let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+        let lang = crate::prefs::get().lang;
         let hw = self.hwnd.0 as isize;
-        match nacre_platform::sendsrv::start(&paths, en, move || post(hw, WM_SEND)) {
+        match nacre_platform::sendsrv::start(&paths, lang, move || post(hw, WM_SEND)) {
             Ok(server) => {
                 let px = (86.0 * self.dpi).floor();
                 let qr = nacre_core::qr::encode(&server.url).and_then(|m| {
@@ -1212,7 +1220,7 @@ impl Notch {
 
     fn shelf_menu(&mut self, i: usize, x: f32, y: f32) {
         if self.menu.is_none() {
-            match Menu::new(&self.paint.comp, self.hwnd, self.dpi, sys::screen_size(), Tier::Full) {
+            match Menu::new(&self.paint.comp, self.hwnd, self.dpi, (self.screen_w, self.monitor.height()), Tier::Full) {
                 Ok(m) => self.menu = Some(m),
                 Err(_) => return,
             }
@@ -1451,7 +1459,7 @@ impl Notch {
 
     fn pill_screen_rect(&self) -> (i32, i32, i32, i32) {
         let base = state::size(state::look(Mode::Rest, None), self.dpi);
-        let l = ((sys::screen_size().0 as f32 - base.w) / 2.0) as i32;
+        let l = self.screen_origin.0 + ((self.screen_w as f32 - base.w) / 2.0) as i32;
         (l, 0, l + base.w as i32, (base.h + 4.0 * self.dpi) as i32)
     }
 
@@ -1459,15 +1467,15 @@ impl Notch {
         if let Some(s) = &self.strip {
             let (l, _, r, _) = self.pill_screen_rect();
             let pad = (60.0 * self.dpi) as i32;
-            s.place(l - pad, 0, r - l + 2 * pad, 2);
+            s.place(l - pad, self.screen_origin.1, r - l + 2 * pad, 2);
             s.set_visible(!self.overlap.fullscreen && !self.off);
         }
     }
 
     fn place_shadow_window(&self) {
         if let Some(sh) = &self.shadow {
-            let x = (self.screen_w - self.win.0) / 2 - sh.pad as i32;
-            sh.place_window(self.hwnd, x, 0, self.win.0 + 2 * sh.pad as i32, self.win.1 + sh.pad as i32);
+            let x = self.screen_origin.0 + (self.screen_w - self.win.0) / 2 - sh.pad as i32;
+            sh.place_window(self.hwnd, x, self.screen_origin.1, self.win.0 + 2 * sh.pad as i32, self.win.1 + sh.pad as i32);
             sh.set_visible(self.shown && !self.off);
         }
     }
@@ -1516,28 +1524,29 @@ impl Notch {
 
     fn publish_notch(&self) {
         if self.off {
-            crate::services::set_notch(0, 0, 0);
+            crate::services::set_notch(self.monitor_index, 0, 0, 0);
             return;
         }
         let (l, _, r, h) = self.pill_screen_rect();
-        crate::services::set_notch(l, r, h - (4.0 * self.dpi) as i32);
+        crate::services::set_notch(self.monitor_index, l, r, h - (4.0 * self.dpi) as i32);
     }
 
     fn set_reserved(&mut self, on: bool) {
         self.reserved = on;
         if on {
             let strip = (34.0 * self.dpi).ceil() as i32;
-            let r = nacre_platform::shell::appbar::reserve_top(self.hwnd, self.screen_w, strip);
+            let r = nacre_platform::shell::appbar::reserve_top(self.hwnd, windows::Win32::Foundation::RECT { left: self.screen_origin.0, top: self.screen_origin.1, right: self.screen_origin.0 + self.screen_w, bottom: self.screen_origin.1 + strip }, strip);
             log::line("appbar", &format!("atas strip={strip} hasil={r:?}"));
         } else {
-            nacre_platform::shell::appbar::release_top();
+            nacre_platform::shell::appbar::release_top(Some(self.hwnd));
         }
     }
 
     fn apply_prefs(&mut self) {
         let s = crate::prefs::get();
-        self.off = !s.notch_enabled;
-        let (vis, reserve) = (s.notch.mode(), s.notch.reserves() && s.notch_enabled && !s.menubar);
+        self.off = !s.notch_enabled || (s.notch_monitor != u8::MAX && s.notch_monitor != self.monitor_index);
+        let selected_here = s.notch_monitor == u8::MAX || s.notch_monitor == self.monitor_index;
+        let (vis, reserve) = (s.notch.mode(), selected_here && s.notch.reserves() && s.notch_enabled && !s.menubar);
         if vis != self.vis {
             self.vis = vis;
             if vis == Vis::Always {
@@ -1574,19 +1583,21 @@ impl Notch {
     }
 
     fn on_reconfigure(&mut self) {
-        let screen_w = sys::screen_size().0;
+        let screen_w = self.monitor.width();
+        let screen_origin = (self.monitor.rect.left, self.monitor.rect.top);
         let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96) as f32 / 96.0 * crate::prefs::ui_scale();
         let win = win_size(dpi, screen_w);
-        if win == self.win && screen_w == self.screen_w && (dpi - self.dpi).abs() < 0.01 {
+        if win == self.win && screen_w == self.screen_w && screen_origin == self.screen_origin && (dpi - self.dpi).abs() < 0.01 {
             return;
         }
         log::line("notch", &format!("konfigurasi ulang layar_w={screen_w} dpi={dpi}"));
         let dpi_changed = (dpi - self.dpi).abs() >= 0.01;
         self.screen_w = screen_w;
+        self.screen_origin = screen_origin;
         self.dpi = dpi;
         self.win = win;
         unsafe {
-            let _ = SetWindowPos(self.hwnd, None, (screen_w - win.0) / 2, 0, win.0, win.1, SWP_NOACTIVATE | SWP_NOZORDER);
+            let _ = SetWindowPos(self.hwnd, None, screen_origin.0 + (screen_w - win.0) / 2, screen_origin.1, win.0, win.1, SWP_NOACTIVATE | SWP_NOZORDER);
         }
         let _ = self._surface.root.SetSize(Vector2 { X: win.0 as f32, Y: win.1 as f32 });
         self.body.resize(win);
@@ -1632,7 +1643,7 @@ impl Notch {
                 self.refresh();
             }
             T_WINCHG => {
-                let mut ov = overlap::evaluate(tracker::external_foreground(), std::process::id(), self.pill_screen_rect(), sys::screen_size());
+                let mut ov = overlap::evaluate_in(tracker::external_foreground(), std::process::id(), self.pill_screen_rect(), windows::Win32::Foundation::RECT { left: self.screen_origin.0, top: self.screen_origin.1, right: self.screen_origin.0 + self.screen_w, bottom: self.screen_origin.1 + self.monitor.height() });
                 if ov.fullscreen && crate::prefs::get().above_fullscreen {
                     ov = overlap::Overlap { overlapped: false, fullscreen: false };
                 }
@@ -1899,7 +1910,9 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             DefWindowProcW(hwnd, msg, wp, lp)
         }
         WM_DESTROY => {
-            NOTCH_HWND.store(0, Ordering::Relaxed);
+            crate::services::unregister_island(hwnd);
+            let mut handles = NOTCHS.lock().unwrap_or_else(|e| e.into_inner());
+            handles.retain(|h| *h != hwnd.0 as isize);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),

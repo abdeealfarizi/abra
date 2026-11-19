@@ -52,6 +52,9 @@ pub fn greeting(hour: u32, lang: Lang) -> &'static str {
         (Daypart::Morning, Lang::En) => "Good morning",
         (Daypart::Noon | Daypart::Afternoon, Lang::En) => "Good afternoon",
         (Daypart::Night, Lang::En) => "Good evening",
+        (Daypart::Morning, Lang::Es) => "Buenos días",
+        (Daypart::Noon | Daypart::Afternoon, Lang::Es) => "Buenas tardes",
+        (Daypart::Night, Lang::Es) => "Buenas noches",
     }
 }
 
@@ -78,7 +81,7 @@ pub fn clock(hour: u32, minute: u32, h24: bool, lang: Lang) -> String {
             0 => 12,
             h => h,
         };
-        format!("{h}:{minute:02} {}", if hour < 12 { "AM" } else { "PM" })
+        format!("{h}:{minute:02} {}", crate::i18n::day_period(lang, hour))
     }
 }
 
@@ -105,6 +108,9 @@ mod tests {
         assert_eq!(daypart(3), Daypart::Night);
         assert_eq!(greeting(22, Lang::Id), "Selamat malam");
         assert_eq!(greeting(13, Lang::En), "Good afternoon");
+        assert_eq!(greeting(8, Lang::Es), "Buenos días");
+        assert_eq!(greeting(15, Lang::Es), "Buenas tardes");
+        assert_eq!(greeting(22, Lang::Es), "Buenas noches");
     }
 
     #[test]

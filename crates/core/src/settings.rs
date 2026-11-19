@@ -280,6 +280,10 @@ pub struct Settings {
     pub notch_hover_open: bool,
     pub win_shadow: bool,
     pub menubar: bool,
+    pub menubar_behavior: Behavior,
+    pub dock_monitor: u8,
+    pub notch_monitor: u8,
+    pub menubar_monitor: u8,
     pub clock_24h: bool,
     pub menubar_glass: bool,
     pub menubar_material: bool,
@@ -349,6 +353,10 @@ impl Default for Settings {
             notch_hover_open: true,
             win_shadow: true,
             menubar: true,
+            menubar_behavior: Behavior::Fixed,
+            dock_monitor: 0,
+            notch_monitor: 0,
+            menubar_monitor: 0,
             clock_24h: false,
             menubar_glass: false,
             menubar_material: true,
@@ -435,6 +443,10 @@ impl Settings {
                         s.menubar = b;
                     }
                 }
+                "menubar_behavior" => s.menubar_behavior = Behavior::parse(v).unwrap_or(s.menubar_behavior),
+                "dock_monitor" => s.dock_monitor = v.parse::<u8>().unwrap_or(s.dock_monitor),
+                "notch_monitor" => s.notch_monitor = v.parse::<u8>().unwrap_or(s.notch_monitor),
+                "menubar_monitor" => s.menubar_monitor = v.parse::<u8>().unwrap_or(s.menubar_monitor),
                 "hot_tl" => s.hot[0] = HotAction::parse(v).unwrap_or(s.hot[0]),
                 "hot_tr" => s.hot[1] = HotAction::parse(v).unwrap_or(s.hot[1]),
                 "hot_bl" => s.hot[2] = HotAction::parse(v).unwrap_or(s.hot[2]),
@@ -613,7 +625,7 @@ impl Settings {
 
     pub fn serialize(&self) -> String {
         format!(
-            "# ABRA settings\ntakeover={}\ndock={}\nnotch={}\nblur={}\nstyle={}\ntransparency={}\ntheme={}\nlang={}\ndock_material={}\ndock_round={}\nnotch_material={}\nnotch_round={}\nautostart={}\ndock_size={}\ndock_gap={}\ndock_zoom={}\ndock_margin={}\nanim={}\nrefraction={}\ndock_enabled={}\nnotch_enabled={}\nnotch_hover_open={}\nwin_shadow={}\nmenubar={}\nclock_24h={}\nmenubar_glass={}\nhot_tl={}\nhot_tr={}\nhot_bl={}\nhot_br={}\nstage={}\nswitcher={}\nstage_right={}\nstage_size={}\nstage_gap={}\nstage_count={}\nstage_speed={}\nstage_desktop_click={}\nstage_media={}\nstage_icons={}\nstage_titles={}\nhide_desktop_icons={}\nmenubar_style={}\ndock_plates={}\nabove_fullscreen={}\nclipboard_history={}\nicon_style={}\nicon_tint={}\naccent={}\nmac_shortcuts={}\ndownloads_stack={}\nrecent_apps={}\nicon_pack={}\nmenubar_material={}\nicon_variant={}\nmin_effect={}\nnotch_idle={}\ngreet_name={}\ngreet_text={}\nlyrics_compact={}\nlyrics_online={}\nnotch_downloads={}\nnotch_send={}\nui_scale={}\nnotch_island={}\nwidget_style={}\nbattery_pct={}\n",
+            "# ABRA settings\ntakeover={}\ndock={}\nnotch={}\nblur={}\nstyle={}\ntransparency={}\ntheme={}\nlang={}\ndock_material={}\ndock_round={}\nnotch_material={}\nnotch_round={}\nautostart={}\ndock_size={}\ndock_gap={}\ndock_zoom={}\ndock_margin={}\nanim={}\nrefraction={}\ndock_enabled={}\nnotch_enabled={}\nnotch_hover_open={}\nwin_shadow={}\nmenubar={}\nmenubar_behavior={}\ndock_monitor={}\nnotch_monitor={}\nmenubar_monitor={}\nclock_24h={}\nmenubar_glass={}\nhot_tl={}\nhot_tr={}\nhot_bl={}\nhot_br={}\nstage={}\nswitcher={}\nstage_right={}\nstage_size={}\nstage_gap={}\nstage_count={}\nstage_speed={}\nstage_desktop_click={}\nstage_media={}\nstage_icons={}\nstage_titles={}\nhide_desktop_icons={}\nmenubar_style={}\ndock_plates={}\nabove_fullscreen={}\nclipboard_history={}\nicon_style={}\nicon_tint={}\naccent={}\nmac_shortcuts={}\ndownloads_stack={}\nrecent_apps={}\nicon_pack={}\nmenubar_material={}\nicon_variant={}\nmin_effect={}\nnotch_idle={}\ngreet_name={}\ngreet_text={}\nlyrics_compact={}\nlyrics_online={}\nnotch_downloads={}\nnotch_send={}\nui_scale={}\nnotch_island={}\nwidget_style={}\nbattery_pct={}\n",
             self.takeover,
             self.dock.key(),
             self.notch.key(),
@@ -638,6 +650,10 @@ impl Settings {
             self.notch_hover_open,
             self.win_shadow,
             self.menubar,
+            self.menubar_behavior.key(),
+            self.dock_monitor,
+            self.notch_monitor,
+            self.menubar_monitor,
             self.clock_24h,
             self.menubar_glass,
             self.hot[0].key(),

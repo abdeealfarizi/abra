@@ -6,7 +6,6 @@ use windows::Win32::Graphics::Gdi::{
     DIB_RGB_COLORS, HGDIOBJ,
 };
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
-use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic, IsWindowVisible};
 
 const DWMWA_TRANSITIONS_FORCEDISABLED: i32 = 3;
@@ -84,9 +83,6 @@ pub fn capture(hwnd: isize, shrink: u32) -> Option<Shot> {
         let ok = PrintWindow(h, dc, PRINT_WINDOW_FLAGS(2)).as_bool();
         let src = std::slice::from_raw_parts(bits as *const u8, (ww * wh * 4) as usize);
 
-        let wdpi = GetDpiForWindow(h).max(48) as f32;
-        let sdpi = GetDpiForSystem().max(48) as f32;
-        let ratio = (wdpi / sdpi).clamp(0.25, 1.0);
         let s = shrink.max(1) as i32;
         let (ow, oh) = ((cw / s).max(1), (ch / s).max(1));
         let mut out = vec![0u8; (ow * oh * 4) as usize];
@@ -97,7 +93,7 @@ pub fn capture(hwnd: isize, shrink: u32) -> Option<Shot> {
                 let mut n = 0u32;
                 for dy in 0..s {
                     for dx in 0..s {
-                        let (sx, sy) = ((((cx + x * s + dx) as f32) * ratio) as i32, (((cy + y * s + dy) as f32) * ratio) as i32);
+                        let (sx, sy) = (cx + x * s + dx, cy + y * s + dy);
                         if sx < ww && sy < wh {
                             let i = ((sy * ww + sx) * 4) as usize;
                             b += src[i] as u32;
