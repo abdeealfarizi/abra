@@ -627,16 +627,21 @@ impl Dock {
 
     fn update_visibility(&mut self) {
         let inputs = Inputs {
-            overlapped: self.overlap.overlapped,
+            overlapped: self.overlap.overlapped
+                || (self.opts.mode == Mode::AutoHide
+                    && crate::presence::has_visible_app_on(windows::Win32::Foundation::RECT {
+                        left: self.screen_origin.0,
+                        top: self.screen_origin.1,
+                        right: self.screen_origin.0 + self.screen.0,
+                        bottom: self.screen_origin.1 + self.screen.1,
+                    })),
             interacting: self.interacting(),
             edge_armed: self.edge_armed,
             starting: self.starting,
             fullscreen: self.overlap.fullscreen,
             revealing: self.revealing,
         };
-        let hide = self.off
-            || should_hide(self.opts.mode, &inputs)
-            || (self.opts.mode == Mode::AutoHide && crate::presence::has_visible_app());
+        let hide = self.off || should_hide(self.opts.mode, &inputs);
         self.sync_strip();
         if hide && self.shown {
             self.shown = false;

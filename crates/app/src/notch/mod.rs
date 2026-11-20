@@ -1860,22 +1860,21 @@ impl Notch {
 
     fn update_visibility(&mut self) {
         let inputs = Inputs {
-            overlapped: self.overlap.overlapped,
+            overlapped: self.overlap.overlapped
+                || (self.vis == Vis::AutoHide
+                    && crate::presence::has_visible_app_on(windows::Win32::Foundation::RECT {
+                        left: self.screen_origin.0,
+                        top: self.screen_origin.1,
+                        right: self.screen_origin.0 + self.screen_w,
+                        bottom: self.screen_origin.1 + self.monitor.height(),
+                    })),
             interacting: self.interacting(),
             edge_armed: self.edge_armed,
             starting: self.starting,
             fullscreen: self.overlap.fullscreen,
             revealing: !self.overlap.fullscreen && self.pills.current(self.now_ms()).is_some(),
         };
-        let hide = self.off
-            || should_hide(self.vis, &inputs)
-            || (self.vis == Vis::AutoHide
-                && crate::presence::has_visible_app_on(windows::Win32::Foundation::RECT {
-                    left: self.screen_origin.0,
-                    top: self.screen_origin.1,
-                    right: self.screen_origin.0 + self.screen_w,
-                    bottom: self.screen_origin.1 + self.monitor.height(),
-                }));
+        let hide = self.off || should_hide(self.vis, &inputs);
         if let Some(s) = &self.strip {
             s.set_visible(!self.overlap.fullscreen && !self.off);
         }
