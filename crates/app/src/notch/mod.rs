@@ -1862,7 +1862,7 @@ impl Notch {
         let inputs = Inputs {
             overlapped: self.overlap.overlapped
                 || (self.vis == Vis::AutoHide
-                    && crate::presence::should_hide_visor_on(windows::Win32::Foundation::RECT {
+                    && crate::presence::has_visible_app_on(windows::Win32::Foundation::RECT {
                         left: self.screen_origin.0,
                         top: self.screen_origin.1,
                         right: self.screen_origin.0 + self.screen_w,
@@ -2057,7 +2057,6 @@ impl Notch {
                 self.refresh();
             }
             T_WINCHG => {
-                crate::presence::refresh();
                 let mut ov = overlap::evaluate_in(tracker::external_foreground(), std::process::id(), self.pill_screen_rect(), windows::Win32::Foundation::RECT { left: self.screen_origin.0, top: self.screen_origin.1, right: self.screen_origin.0 + self.screen_w, bottom: self.screen_origin.1 + self.monitor.height() });
                 if ov.fullscreen && crate::prefs::get().above_fullscreen {
                     ov = overlap::Overlap { overlapped: false, fullscreen: false };
@@ -2078,7 +2077,6 @@ impl Notch {
                 self.update_visibility();
             }
             T_START => {
-                crate::presence::refresh();
                 self.starting = false;
                 self.update_visibility();
             }
