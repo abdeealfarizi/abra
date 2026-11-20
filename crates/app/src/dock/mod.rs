@@ -62,6 +62,7 @@ const TIMER_REGION: usize = 109;
 const TIMER_RECONF: usize = 110;
 const TIMER_TRASH: usize = 111;
 const TIMER_REVEAL: usize = 112;
+const TIMER_CENTER: usize = 113;
 const TRASH_POLL_MS: u32 = 4000;
 const WM_DISPLAYCHANGE: u32 = 0x007E;
 const WM_DPICHANGED: u32 = 0x02E0;
@@ -203,6 +204,8 @@ pub struct Dock {
     preview: Option<Preview>,
     menu: Option<Menu>,
     pending_menu: Option<MenuInfo>,
+    center_pending: Option<(String, HashSet<isize>, Instant)>,
+    center_target: Option<isize>,
 }
 
 fn f32_ref(v: f32) -> windows_core::Result<windows::Foundation::IReference<f32>> {
@@ -423,6 +426,8 @@ impl Dock {
                 preview: None,
                 menu: None,
                 pending_menu: None,
+                center_pending: None,
+                center_target: None,
             });
             dock.compute_geometry();
             dock.refresh_windows();
@@ -655,6 +660,18 @@ impl Dock {
 
     pub fn refresh_windows(&mut self) {
         let all_wins = enumerate::list(std::process::id());
+        if let Some((path, known, expires)) = &self.center_pending {
+            if Instant::now() >= *expires {
+                self.center_pending = None;
+            } else if let Some(win) = all_wins.iter().find(|w| key_of(&w.path) == *path && !known.contains(&w.hwnd) && !focus::is_minimized(w.hwnd)) {
+                self.center_target = Some(win.hwnd);
+                self.center_pending = None;
+                timer(self.hwnd, TIMER_CENTER, 220);
+            }
+        }
+        if self.center_pending.is_some() {
+            timer(self.hwnd, TIMER_WINDOWS, 250);
+        }
         let open_keys: HashSet<String> = all_wins.iter().map(|w| key_of(&w.path)).collect();
         let bounds = windows::Win32::Foundation::RECT {
             left: self.screen_origin.0,
@@ -1273,12 +1290,20 @@ impl Dock {
         self.apply(self.cursor, false);
     }
 
+    fn launch_centered(&mut self, path: &str) {
+        let known = enumerate::list(std::process::id()).into_iter().map(|w| w.hwnd).collect();
+        self.center_pending = Some((key_of(path), known, Instant::now() + Duration::from_secs(12)));
+        self.center_target = None;
+        launch::open(path);
+        timer(self.hwnd, TIMER_WINDOWS, 250);
+    }
+
     fn on_click(&mut self, x: f32) {
         let Some((idx, entry)) = self.entry_at(x) else { return };
         self.hide_popups();
         match entry {
             Entry::Start => launch::toggle_start(self.start_open_at_press),
-            Entry::Launchpad => crate::launchpad::toggle(),
+            Entry::Launchpad => crate::launchpad::toggle_at(self.opts.monitor.rect),
             Entry::App(i) => {
                 let Some(it) = self.items.get(i).cloned() else { return };
                 if it.running() {
@@ -1290,7 +1315,7 @@ impl Dock {
                     let ok = self.activate_target(target);
                     log::line("dock", &format!("aktifkan {} hwnd={target} ok={ok}", it.name));
                 } else {
-                    launch::open(&it.path);
+                    self.launch_centered(&it.path);
                     if let Some(v) = self.views.get(idx) {
                         let _ = v.bounce(self.icon_y);
                     }
@@ -1324,8 +1349,8 @@ impl Dock {
 
     fn on_middle_click(&mut self, x: f32) {
         if let Some((_, Entry::App(i))) = self.entry_at(x) {
-            if let Some(it) = self.items.get(i) {
-                launch::open(&it.path);
+            if let Some(it) = self.items.get(i).cloned() {
+                self.launch_centered(&it.path);
             }
         }
     }
@@ -1591,12 +1616,12 @@ impl Dock {
             }
             CMD_OPEN => {
                 if let Some(it) = &info.item {
-                    launch::open(&it.path);
+                    self.launch_centered(&it.path);
                 } else if let Some(key) = info.special {
                     if key == START_KEY {
                         launch::toggle_start(false);
                     } else {
-                        crate::launchpad::toggle();
+                        crate::launchpad::toggle_at(self.opts.monitor.rect);
                     }
                 }
             }
@@ -1701,6 +1726,7 @@ impl Dock {
         kill(self.hwnd, id);
         match id {
             TIMER_WINDOWS => self.refresh_windows(),
+            TIMER_CENTER => self.center_pending_window(),
             TIMER_APPBAR => {
                 if self.opts.appbar {
                     self.reserve_strip();
@@ -1754,6 +1780,34 @@ impl Dock {
                 timer(self.hwnd, TIMER_TRASH, TRASH_POLL_MS);
             }
             _ => {}
+        }
+    }
+
+    fn center_pending_window(&mut self) {
+        let Some(hwnd) = self.center_target.take() else { return };
+        let window = HWND(hwnd as *mut _);
+        unsafe {
+            if !IsWindow(Some(window)).as_bool() || IsIconic(window).as_bool() || IsZoomed(window).as_bool() {
+                return;
+            }
+            let mut rect = windows::Win32::Foundation::RECT::default();
+            if GetWindowRect(window, &mut rect).is_err() {
+                return;
+            }
+            let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+            if width <= 0 || height <= 0 {
+                return;
+            }
+            let bounds = self.opts.monitor.rect;
+            let current_monitor = crate::display::monitor_bounds_for_window(hwnd).unwrap_or(bounds);
+            let fullscreen = rect.left <= current_monitor.left + 2 && rect.top <= current_monitor.top + 2
+                && rect.right >= current_monitor.right - 2 && rect.bottom >= current_monitor.bottom - 2;
+            if fullscreen {
+                return;
+            }
+            let x = (bounds.left + (bounds.right - bounds.left - width) / 2).clamp(bounds.left, (bounds.right - width).max(bounds.left));
+            let y = (bounds.top + (bounds.bottom - bounds.top - height) / 2).clamp(bounds.top, (bounds.bottom - height).max(bounds.top));
+            let _ = SetWindowPos(window, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
         }
     }
 

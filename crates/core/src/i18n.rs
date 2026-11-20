@@ -865,6 +865,102 @@ const ES: &[(&str, &str)] = &[
     ("Sidik jari installer tidak cocok", "La huella digital del instalador no coincide"),
 ];
 
+// Los perfiles de Rail también tienen rótulos en inglés que no forman parte del
+// catálogo general. La misma tabla sirve para menús nativos con rótulos conocidos.
+const APP_MENU_ES: &[(&str, &str)] = &[
+    ("ABRA Guide", "Guía de ABRA"),
+    ("Address Bar", "Barra de direcciones"),
+    ("Align Left", "Alinear a la izquierda"),
+    ("Align Right", "Alinear a la derecha"),
+    ("App Help", "Ayuda de la aplicación"),
+    ("Back", "Atrás"),
+    ("Bold", "Negrita"),
+    ("Bookmark All Tabs", "Guardar todas las pestañas en marcadores"),
+    ("Bookmark Manager", "Administrador de marcadores"),
+    ("Bookmark This Tab", "Guardar esta pestaña en marcadores"),
+    ("Bookmarks", "Marcadores"),
+    ("Center", "Centrar"),
+    ("Clear Browsing Data…", "Borrar datos de navegación…"),
+    ("Close Editor", "Cerrar editor"),
+    ("Close Tab", "Cerrar pestaña"),
+    ("Command Palette…", "Paleta de comandos…"),
+    ("Copy as Path", "Copiar como ruta"),
+    ("Delete", "Eliminar"),
+    ("Details", "Detalles"),
+    ("Details Pane", "Panel de detalles"),
+    ("Developer Tools", "Herramientas para desarrolladores"),
+    ("Enclosing Folder", "Carpeta contenedora"),
+    ("Explorer", "Explorador"),
+    ("Find in Files…", "Buscar en archivos…"),
+    ("First Tab", "Primera pestaña"),
+    ("Format", "Formato"),
+    ("Forward", "Adelante"),
+    ("Full Screen", "Pantalla completa"),
+    ("Go", "Ir"),
+    ("Go to Line…", "Ir a la línea…"),
+    ("Go to Symbol…", "Ir al símbolo…"),
+    ("Hard Reload", "Recargar sin caché"),
+    ("History", "Historial"),
+    ("Italic", "Cursiva"),
+    ("Large Icons", "Iconos grandes"),
+    ("Last Tab", "Última pestaña"),
+    ("List", "Lista"),
+    ("Medium Icons", "Iconos medianos"),
+    ("Move Tab Left", "Mover pestaña a la izquierda"),
+    ("Move Tab Right", "Mover pestaña a la derecha"),
+    ("Move to Left of Screen", "Mover a la izquierda de la pantalla"),
+    ("Move to Right of Screen", "Mover a la derecha de la pantalla"),
+    ("New File", "Archivo nuevo"),
+    ("New Folder", "Carpeta nueva"),
+    ("New Incognito Window", "Nueva ventana de incógnito"),
+    ("New Tab", "Nueva pestaña"),
+    ("New Window", "Nueva ventana"),
+    ("Next", "Siguiente"),
+    ("Next Tab", "Siguiente pestaña"),
+    ("Open File…", "Abrir archivo…"),
+    ("Paste as Plain Text", "Pegar como texto sin formato"),
+    ("Play / Pause", "Reproducir / Pausar"),
+    ("Playback", "Reproducción"),
+    ("Preview Pane", "Panel de vista previa"),
+    ("Previous", "Anterior"),
+    ("Previous Tab", "Pestaña anterior"),
+    ("Properties", "Propiedades"),
+    ("Quick Open…", "Abrir rápidamente…"),
+    ("Refresh", "Actualizar"),
+    ("Reload", "Recargar"),
+    ("Rename", "Cambiar nombre"),
+    ("Reopen Closed Tab", "Volver a abrir la pestaña cerrada"),
+    ("Replace…", "Reemplazar…"),
+    ("Run", "Ejecutar"),
+    ("Run Without Debugging", "Ejecutar sin depurar"),
+    ("Save As…", "Guardar como…"),
+    ("Save Page As…", "Guardar página como…"),
+    ("Show Bookmarks Bar", "Mostrar barra de marcadores"),
+    ("Show History", "Mostrar historial"),
+    ("Small Icons", "Iconos pequeños"),
+    ("Start Debugging", "Iniciar depuración"),
+    ("Tab", "Pestaña"),
+    ("Terminal", "Terminal"),
+    ("Tiles", "Mosaicos"),
+    ("Toggle Comment", "Alternar comentario"),
+    ("Toggle Sidebar", "Mostrar u ocultar la barra lateral"),
+    ("Underline", "Subrayado"),
+    ("View Source", "Ver código fuente"),
+    ("Tools", "Herramientas"),
+    ("Options", "Opciones"),
+    ("Preferences", "Preferencias"),
+];
+
+pub fn menu_es(english: &str) -> Option<&'static str> {
+    let normalized = english.trim().replace("...", "…");
+    if let Some((key, _)) = EN.iter().find(|(_, value)| value.eq_ignore_ascii_case(&normalized)) {
+        if let Some((_, spanish)) = ES.iter().find(|(candidate, _)| candidate == key) {
+            return Some(spanish);
+        }
+    }
+    APP_MENU_ES.iter().find(|(key, _)| key.eq_ignore_ascii_case(&normalized)).map(|(_, spanish)| *spanish)
+}
+
 pub fn is_known(src: &str) -> bool {
     EN.iter().any(|(k, _)| *k == src)
 }
@@ -944,6 +1040,14 @@ mod tests {
         for (key, _) in EN {
             assert!(ES.iter().any(|(spanish_key, _)| spanish_key == key), "falta la clave española: {key}");
         }
+    }
+
+    #[test]
+    fn rail_english_headings_translate_to_spanish() {
+        assert_eq!(menu_es("File"), Some("Archivo"));
+        assert_eq!(menu_es("Edit"), Some("Editar"));
+        assert_eq!(menu_es("View"), Some("Vista"));
+        assert_eq!(menu_es("Open..."), Some("Abrir…"));
     }
 
     #[test]

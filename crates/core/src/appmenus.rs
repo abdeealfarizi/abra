@@ -447,4 +447,18 @@ mod tests {
         assert_eq!((m.title(false), m.title(true)), ("Berkas", "File"));
         assert_eq!((m.lines[0].label(false), m.lines[0].label(true)), ("Tab Baru", "New Tab"));
     }
+
+    #[test]
+    fn every_english_profile_label_has_spanish() {
+        for profile in [GENERIC, BROWSER, EXPLORER, OFFICE, CODE, MUSIC] {
+            for menu in profile {
+                assert!(crate::i18n::menu_es(menu.en).is_some(), "missing Spanish menu: {}", menu.en);
+                for line in menu.lines {
+                    if let Line::Cmd { en, .. } = line {
+                        assert!(crate::i18n::menu_es(en).is_some(), "missing Spanish command: {en}");
+                    }
+                }
+            }
+        }
+    }
 }

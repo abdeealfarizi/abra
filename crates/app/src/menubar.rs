@@ -134,18 +134,27 @@ fn with_bars(mut f: impl FnMut(&mut Bar)) {
     });
 }
 
-fn english() -> bool { prefs::get().lang != nacre_core::i18n::Lang::Id }
+fn profile_text(id: &'static str, en: &'static str) -> String {
+    match prefs::get().lang {
+        nacre_core::i18n::Lang::Id => id.to_string(),
+        nacre_core::i18n::Lang::En => en.to_string(),
+        nacre_core::i18n::Lang::Es => nacre_core::i18n::menu_es(en).unwrap_or(id).to_string(),
+    }
+}
+
+fn native_text(text: &str) -> String {
+    if prefs::get().lang == nacre_core::i18n::Lang::Es {
+        nacre_core::i18n::menu_es(text).unwrap_or(text).to_string()
+    } else {
+        text.to_string()
+    }
+}
 
 pub fn refresh_radios() {
     with_bars(|b| {
         if let Some(r) = &b.radios { let _ = r.commands.send(radio::Cmd::Refresh); }
     });
 }
-fn mt(key: &'static str) -> String {
-    let t = prefs::tr(key);
-    t.strip_prefix("Menu:").unwrap_or(t).to_string()
-}
-
 fn edge_segments(screen_left: i32, screen_w: i32, dpi: f32, monitor_index: u8) -> Vec<(i32, i32)> {
     let screen_w = screen_w.max(0);
     let Some((left, right, _)) = services::notch_for(monitor_index).filter(|(left, right, _)| right > left) else {
@@ -768,13 +777,12 @@ impl Bar {
             LItem { id: APP, width: t(&self.app_label(), APP_W) },
         ];
         if self.native.is_empty() {
-            let en = english();
             for (i, m) in self.profile().iter().enumerate() {
-                left.push(LItem { id: PROF0 + i as u32, width: t(m.title(en), BAR_W) });
+                left.push(LItem { id: PROF0 + i as u32, width: t(&profile_text(m.id, m.en), BAR_W) });
             }
         } else {
             for (i, top) in self.native.iter().enumerate().take(20) {
-                left.push(LItem { id: NATIVE0 + i as u32, width: t(&top.title, BAR_W) });
+                left.push(LItem { id: NATIVE0 + i as u32, width: t(&native_text(&top.title), BAR_W) });
             }
         }
         let icon_w = 30.0 * d;
@@ -1087,11 +1095,11 @@ impl Bar {
                 LOGO => self.draw_logo(p.x, p.w),
                 APP => self.draw_text(&app, APP_W, p.x, p.w, 1.0),
                 n if (PROF0..PROF0 + 12).contains(&n) => {
-                    let title = self.profile().get((n - PROF0) as usize).map(|m| m.title(english())).unwrap_or("");
-                    self.draw_text(title, BAR_W, p.x, p.w, 1.0)
+                    let title = self.profile().get((n - PROF0) as usize).map(|m| profile_text(m.id, m.en)).unwrap_or_default();
+                    self.draw_text(&title, BAR_W, p.x, p.w, 1.0)
                 }
                 n if n >= NATIVE0 && n < NATIVE0 + 20 => {
-                    let title = self.native.get((n - NATIVE0) as usize).map(|t| t.title.clone()).unwrap_or_default();
+                    let title = self.native.get((n - NATIVE0) as usize).map(|t| native_text(&t.title)).unwrap_or_default();
                     self.draw_text(&title, BAR_W, p.x, p.w, 1.0)
                 }
                 _ => {}
@@ -1285,7 +1293,7 @@ impl Bar {
                         return Item::separator();
                     }
                     let pad = "    ".repeat(e.depth as usize);
-                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, e.label);
+                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, native_text(&e.label));
                     let it = Item::action(if e.header { 0 } else { NATIVE_CMD + e.id as usize }, &label, e.enabled && !e.header);
                     if e.accel.is_empty() { it } else { it.with_accel(&e.accel) }
                 })
@@ -1356,15 +1364,14 @@ impl Bar {
                 ]
             }
             n if (PROF0..PROF0 + 12).contains(&n) => {
-                let en = english();
                 let Some(m) = self.profile().get((n - PROF0) as usize) else { return vec![] };
                 m.lines
                     .iter()
                     .enumerate()
                     .map(|(j, l)| match l {
                         Line::Sep => Item::separator(),
-                        Line::Cmd { accel, .. } => {
-                            let it = a(PROF_CMD + (n - PROF0) as usize * 100 + j, l.label(en));
+                        Line::Cmd { id, en, accel, .. } => {
+                            let it = a(PROF_CMD + (n - PROF0) as usize * 100 + j, &profile_text(id, en));
                             if accel.is_empty() { it } else { it.with_accel(accel) }
                         }
                     })
@@ -1423,7 +1430,7 @@ impl Bar {
             102 => launch::open("ms-windows-store:"),
             103 => crate::settings_win::open(&self.comp),
             104 => launch::show("taskmgr.exe", ""),
-            105 => crate::launchpad::toggle(),
+            105 => crate::launchpad::toggle_at(self.screen_bounds()),
             106 => crate::mission::toggle(),
             110 => confirm_power("Tidur sekarang?", "rundll32.exe", "powrprof.dll,SetSuspendState 0,1,0"),
             111 => confirm_power("Mulai ulang komputer sekarang?", "shutdown.exe", "/r /t 0"),
@@ -1448,7 +1455,7 @@ impl Bar {
             }
             807 => prefs::update(|st| st.stage = !st.stage),
             808 => crate::mission::toggle(),
-            809 => crate::launchpad::toggle(),
+            809 => crate::launchpad::toggle_at(self.screen_bounds()),
             810 => crate::settings_win::open(&self.comp),
             811 => launch::open("ms-settings:"),
             200 => self.about_app(),

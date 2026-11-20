@@ -128,6 +128,7 @@ enum Run {
 
 struct Spot {
     popup: Popup,
+    screen_bounds: (i32, i32, i32, i32),
     gfx: Gfx,
     comp: Compositor,
     dpi: f32,
@@ -347,17 +348,19 @@ fn default_bounds() -> RECT {
         })
 }
 
-fn toggle_mode_at(mode: Mode, bounds: RECT) {
-    let open_mode = SPOT.with(|c| c.borrow().as_ref().map(|s| s.mode));
-    match open_mode {
-        Some(m) if m == mode => {
+pub fn toggle_mode_at(mode: Mode, bounds: RECT) {
+    let target = (bounds.left, bounds.top, bounds.right, bounds.bottom);
+    let open = SPOT.with(|c| c.borrow().as_ref().map(|s| (s.mode, s.screen_bounds)));
+    match open {
+        Some((m, current)) if current == target && m == mode => {
             close();
             return;
         }
-        Some(_) => {
+        Some((_, current)) if current == target => {
             with_spot(|s| s.set_mode(mode));
             return;
         }
+        Some(_) => close(),
         None => {}
     }
     let comp = CTL.with(|c| c.borrow().as_ref().map(|c| c.comp.clone()));
@@ -444,6 +447,7 @@ fn create(comp: &Compositor, mode: Mode, bounds: RECT) -> windows_core::Result<B
     let _ = mode;
     let s = Box::new(Spot {
         popup,
+        screen_bounds: (bounds.left, bounds.top, bounds.right, bounds.bottom),
         gfx,
         comp: comp.clone(),
         dpi,
