@@ -29,6 +29,7 @@ mod macshortcuts;
 mod single_instance;
 mod tasks;
 mod updater;
+mod presence;
 
 use nacre_core::visibility::policy::Mode;
 use nacre_platform::{log, shell::taskbar};
@@ -143,6 +144,7 @@ fn main() {
     }
 
     prefs::init();
+    presence::refresh();
     let pref = prefs::get();
     let host = match nacre_ui::host::Host::new() {
         Ok(h) => h,

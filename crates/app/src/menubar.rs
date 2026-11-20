@@ -189,6 +189,7 @@ fn recolor(b: &Bitmap, rgb: [u8; 3]) -> Vec<u8> {
 }
 
 fn noop_fg() {
+    crate::presence::refresh();
     CTL.with(|c| {
         if let Some(ctl) = c.borrow().as_ref() {
             unsafe {
@@ -669,7 +670,9 @@ impl Bar {
             fullscreen: self.fullscreen,
             ..Default::default()
         };
-        let hide = !self.is_selected() || policy::should_hide(behavior.mode(), &inputs);
+        let hide = !self.is_selected()
+            || policy::should_hide(behavior.mode(), &inputs)
+            || (behavior == Behavior::Smart && crate::presence::has_visible_app());
         self.place_strip();
         if hide && self.shown {
             self.shown = false;

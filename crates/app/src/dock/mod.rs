@@ -241,6 +241,7 @@ pub fn request_appbar_resync() {
 }
 
 fn on_windows_changed() {
+    crate::presence::refresh();
     for h in DOCKS.lock().unwrap_or_else(|e| e.into_inner()).iter().copied() {
         timer(HWND(h as *mut _), TIMER_WINDOWS, 120);
     }
@@ -633,7 +634,9 @@ impl Dock {
             fullscreen: self.overlap.fullscreen,
             revealing: self.revealing,
         };
-        let hide = self.off || should_hide(self.opts.mode, &inputs);
+        let hide = self.off
+            || should_hide(self.opts.mode, &inputs)
+            || (self.opts.mode == Mode::AutoHide && crate::presence::has_visible_app());
         self.sync_strip();
         if hide && self.shown {
             self.shown = false;

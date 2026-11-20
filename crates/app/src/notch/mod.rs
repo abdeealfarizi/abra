@@ -214,6 +214,7 @@ pub fn tasks_changed() {
 }
 
 fn on_windows_changed() {
+    crate::presence::refresh();
     let handles = NOTCHS.lock().unwrap_or_else(|e| e.into_inner()).clone();
     for raw in handles { timer(HWND(raw as *mut _), T_WINCHG, 150); }
 }
@@ -1866,7 +1867,15 @@ impl Notch {
             fullscreen: self.overlap.fullscreen,
             revealing: !self.overlap.fullscreen && self.pills.current(self.now_ms()).is_some(),
         };
-        let hide = self.off || should_hide(self.vis, &inputs);
+        let hide = self.off
+            || should_hide(self.vis, &inputs)
+            || (self.vis == Vis::AutoHide
+                && crate::presence::has_visible_app_on(windows::Win32::Foundation::RECT {
+                    left: self.screen_origin.0,
+                    top: self.screen_origin.1,
+                    right: self.screen_origin.0 + self.screen_w,
+                    bottom: self.screen_origin.1 + self.monitor.height(),
+                }));
         if let Some(s) = &self.strip {
             s.set_visible(!self.overlap.fullscreen && !self.off);
         }
