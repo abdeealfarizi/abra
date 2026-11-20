@@ -51,18 +51,18 @@ pub fn human_size(b: u64, en: bool) -> String {
     format!("{s} {unit}")
 }
 
-pub fn page(token: &str, files: &[(String, u64)], en: bool) -> String {
-    let (title, hint, dl) = if en {
-        ("Sent from ABRA", "Tap a file to save it to this phone.", "Download")
-    } else {
-        ("Dikirim dari ABRA", "Ketuk berkas untuk menyimpannya ke HP ini.", "Unduh")
+pub fn page(token: &str, files: &[(String, u64)], lang: crate::i18n::Lang) -> String {
+    let (title, hint, dl, html_lang) = match lang {
+        crate::i18n::Lang::Id => ("Dikirim dari ABRA", "Ketuk berkas untuk menyimpannya ke HP ini.", "Unduh", "id"),
+        crate::i18n::Lang::En => ("Sent from ABRA", "Tap a file to save it to this phone.", "Download", "en"),
+        crate::i18n::Lang::Es => ("Enviado desde ABRA", "Toca un archivo para guardarlo en este teléfono.", "Descargar", "es"),
     };
     let mut rows = String::new();
     for (i, (name, size)) in files.iter().enumerate() {
         rows.push_str(&format!(
             "<a class=\"f\" href=\"/{token}/f/{i}\" download><span class=\"n\">{}</span><span class=\"s\">{}</span><span class=\"b\">{dl}</span></a>\n",
             escape_html(name),
-            human_size(*size, en)
+            human_size(*size, lang == crate::i18n::Lang::En)
         ));
     }
     format!(
@@ -74,7 +74,7 @@ main{{max-width:560px;margin:0 auto;padding:28px 18px}}h1{{font-size:22px;margin
 .n{{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}}.s{{color:#9a9aa3;font-size:14px}}\
 .b{{background:#0a84ff;color:#fff;border-radius:999px;padding:7px 14px;font-weight:600;font-size:14px}}\
 </style></head><body><main><h1>{title}</h1><p>{hint}</p>\n{rows}</main></body></html>",
-        lang = if en { "en" } else { "id" }
+        lang = html_lang
     )
 }
 
@@ -105,9 +105,11 @@ mod tests {
         assert_eq!(pct("foto ü.jpg"), "foto%20%C3%BC.jpg");
         assert_eq!(ascii_name("foto ü\".jpg"), "foto __.jpg");
         assert_eq!(ascii_name("日本"), "__");
-        let html = page("tok", &[("<x>.pdf".into(), 1_234_567)], false);
+        let html = page("tok", &[("<x>.pdf".into(), 1_234_567)], crate::i18n::Lang::Id);
         assert!(html.contains("&lt;x&gt;.pdf") && html.contains("/tok/f/0") && html.contains("1,2 MB"));
         assert!(!html.contains("<script"), "tanpa skrip");
+        assert!(page("tok", &[], crate::i18n::Lang::Es).contains("lang=\"es\""));
+        assert!(page("tok", &[], crate::i18n::Lang::Es).contains("Enviado desde ABRA"));
     }
 
     #[test]

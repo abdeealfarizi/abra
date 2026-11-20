@@ -329,6 +329,12 @@ impl Net {
             Anchor::Below(x, top) => (x, top, false),
             Anchor::Corner(r, top) => (r, top, true),
         };
+        let monitors = crate::display::monitors();
+        if let Some(monitor) = monitors.iter().find(|m| x >= m.rect.left && x < m.rect.right && top >= m.rect.top && top < m.rect.bottom)
+            .or_else(|| monitors.iter().find(|m| m.primary))
+        {
+            menu.set_bounds((monitor.rect.left, monitor.rect.top), (monitor.width(), monitor.height()));
+        }
         if let Err(e) = menu.show_card(&self.comp, gfx, items, x, top, right) {
             nacre_platform::log::line("netmenu", &format!("menu gagal: {e}"));
             return;

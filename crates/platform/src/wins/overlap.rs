@@ -62,34 +62,31 @@ fn frame_rect(h: HWND) -> Option<RECT> {
 }
 
 pub fn evaluate(fg: isize, own_pid: u32, dock: (i32, i32, i32, i32), screen: (i32, i32)) -> Overlap {
+    evaluate_in(fg, own_pid, dock, RECT { left: 0, top: 0, right: screen.0, bottom: screen.1 })
+}
+
+pub fn evaluate_in(fg: isize, own_pid: u32, dock: (i32, i32, i32, i32), screen: RECT) -> Overlap {
     let none = Overlap::default();
     let h = HWND(fg as *mut _);
     unsafe {
-        if fg == 0 || !IsWindow(Some(h)).as_bool() || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
-            return none;
-        }
+        if fg == 0 || !IsWindow(Some(h)).as_bool() || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() { return none; }
         let mut cloaked = 0u32;
-        if DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, 4).is_ok() && cloaked != 0 {
-            return none;
-        }
+        if DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, 4).is_ok() && cloaked != 0 { return none; }
         let mut pid = 0u32;
         GetWindowThreadProcessId(h, Some(&mut pid));
-        if pid == own_pid || is_shell_class(&class_of(h)) {
-            return none;
-        }
-        if GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 {
-            return none;
-        }
+        if pid == own_pid || is_shell_class(&class_of(h)) { return none; }
+        if GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 { return none; }
         let Some(r) = frame_rect(h) else { return none };
         let (cx, cy) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
-        if cx < 0 || cy < 0 || cx >= screen.0 || cy >= screen.1 {
+        if cx < screen.left || cy < screen.top || cx >= screen.right || cy >= screen.bottom {
             return none;
         }
-        let frame = (r.left, r.top, r.right, r.bottom);
+        let frame = (r.left - screen.left, r.top - screen.top, r.right - screen.left, r.bottom - screen.top);
         let zoomed = IsZoomed(h).as_bool();
         let caption = GetWindowLongW(h, GWL_STYLE) as u32 & WS_CAPTION.0 == WS_CAPTION.0;
-        let work = work_area(h).unwrap_or((0, 0, screen.0, screen.1));
-        let fullscreen = is_fullscreen(frame, screen, work, zoomed, caption) || exclusive_fullscreen();
+        let work = work_area(h).unwrap_or((screen.left, screen.top, screen.right, screen.bottom));
+        let work = (work.0 - screen.left, work.1 - screen.top, work.2 - screen.left, work.3 - screen.top);
+        let fullscreen = is_fullscreen(frame, (screen.right - screen.left, screen.bottom - screen.top), work, zoomed, caption) || exclusive_fullscreen();
         if fullscreen || zoomed {
             return Overlap { overlapped: true, fullscreen };
         }

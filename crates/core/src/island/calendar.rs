@@ -1,7 +1,8 @@
+use crate::i18n::Lang;
+
 pub fn is_leap(y: i32) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
-
 pub fn days_in_month(y: i32, m: u32) -> u32 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -58,25 +59,27 @@ pub fn add_days(y: i32, m: u32, d: u32, delta: i32) -> (i32, u32, u32) {
     (y, m, d as u32)
 }
 
-pub fn month_short(m: u32, en: bool) -> &'static str {
+pub fn month_short(m: u32, lang: Lang) -> &'static str {
     const ID: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
     const EN: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const ES: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
     let i = (m.clamp(1, 12) - 1) as usize;
-    if en {
-        EN[i]
-    } else {
-        ID[i]
+    match lang {
+        Lang::Id => ID[i],
+        Lang::En => EN[i],
+        Lang::Es => ES[i],
     }
 }
 
-pub fn weekday_short(wd: u32, en: bool) -> &'static str {
+pub fn weekday_short(wd: u32, lang: Lang) -> &'static str {
     const ID: [&str; 7] = ["MIN", "SEN", "SEL", "RAB", "KAM", "JUM", "SAB"];
     const EN: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    const ES: [&str; 7] = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
     let i = (wd % 7) as usize;
-    if en {
-        EN[i]
-    } else {
-        ID[i]
+    match lang {
+        Lang::Id => ID[i],
+        Lang::En => EN[i],
+        Lang::Es => ES[i],
     }
 }
 
@@ -131,9 +134,10 @@ mod tests {
         assert_eq!(add_days(2026, 3, 1, -1), (2026, 2, 28));
         assert_eq!(add_days(2024, 3, 1, -1), (2024, 2, 29));
         assert_eq!(add_days(2026, 1, 2, -40), (2025, 11, 23));
-        assert_eq!(weekday_short(weekday(2026, 11, 13), false), "JUM");
-        assert_eq!(weekday_short(4, true), "THU");
-        assert_eq!((month_short(8, false), month_short(8, true)), ("Agu", "Aug"));
+        assert_eq!(weekday_short(weekday(2026, 11, 13), Lang::Id), "JUM");
+        assert_eq!(weekday_short(4, Lang::En), "THU");
+        assert_eq!((month_short(8, Lang::Id), month_short(8, Lang::En), month_short(8, Lang::Es)), ("Agu", "Aug", "ago"));
+        assert_eq!(weekday_short(3, Lang::Es), "MIÉ");
     }
 
     #[test]

@@ -61,11 +61,12 @@ pub struct Preview {
     popup: Popup,
     cells: Vec<Cell>,
     dpi: f32,
+    screen_origin: (i32, i32),
     screen_w: i32,
 }
 
 impl Preview {
-    pub fn new(comp: &Compositor, dock_hwnd: HWND, dpi: f32, screen_w: i32) -> Result<Preview> {
+    pub fn new(comp: &Compositor, dock_hwnd: HWND, dpi: f32, screen_origin: (i32, i32), screen_w: i32) -> Result<Preview> {
         TARGET.store(dock_hwnd.0 as isize, Ordering::Relaxed);
         let popup = Popup::new(
             comp,
@@ -74,7 +75,7 @@ impl Preview {
             WINDOW_EX_STYLE(0),
             crate::prefs::glass((10.0, 10.0), 18.0 * dpi, crate::prefs::Role::Dark),
         )?;
-        Ok(Preview { popup, cells: vec![], dpi, screen_w })
+        Ok(Preview { popup, cells: vec![], dpi, screen_origin, screen_w })
     }
 
     pub fn panel_mut(&mut self) -> &mut nacre_ui::glass::GlassPanel {
@@ -104,7 +105,8 @@ impl Preview {
         let (pad, gap, title_h) = ((12.0 * d) as i32, (6.0 * d) as i32, (20.0 * d) as i32);
         let w = pad + n as i32 * (tw + pad);
         let h = pad + th + gap + title_h + pad;
-        let x = (cx - w / 2).clamp(4, (self.screen_w - w - 4).max(4));
+        let left = self.screen_origin.0;
+        let x = (cx - w / 2).clamp(left + 4, left + (self.screen_w - w - 4).max(4));
         self.popup.set_rect(x, bottom - h, w, h)?;
         self.popup.panel.set_radius(18.0 * d)?;
         self.popup.show();
@@ -112,7 +114,7 @@ impl Preview {
         let style = Style { px: (12.0 * d).round() as i32, weight: 500 };
         for (i, (hwnd, title, minimized)) in windows.iter().take(n).enumerate() {
             let x0 = pad + i as i32 * (tw + pad);
-            let thumb = if *minimized { None } else { thumbnail::register(self.popup.hwnd.0 as isize, *hwnd) };
+            let mut thumb = if *minimized { None } else { thumbnail::register(self.popup.hwnd.0 as isize, *hwnd) };
             if *minimized {
                 if let Some(s) = icon {
                     let sz = (64.0 * d) as i32;
@@ -127,11 +129,34 @@ impl Preview {
                 }
             }
             if let Some(t) = thumb {
-                let (sw, sh) = thumbnail::source_size(t).filter(|s| s.0 > 0 && s.1 > 0).unwrap_or((tw, th));
-                let k = (tw as f32 / sw as f32).min(th as f32 / sh as f32).min(1.0);
-                let (dw, dh) = (((sw as f32 * k) as i32).max(1), ((sh as f32 * k) as i32).max(1));
-                let (dx, dy) = (x0 + (tw - dw) / 2, pad + (th - dh) / 2);
-                thumbnail::place(t, (dx, dy, dx + dw, dy + dh), 255);
+                let source = thumbnail::source_size(t).filter(|s| s.0 > 0 && s.1 > 0);
+                let placed = source.is_some_and(|(sw, sh)| {
+                    let k = (tw as f32 / sw as f32).min(th as f32 / sh as f32).min(1.0);
+                    let (dw, dh) = (((sw as f32 * k) as i32).max(1), ((sh as f32 * k) as i32).max(1));
+                    let (dx, dy) = (x0 + (tw - dw) / 2, pad + (th - dh) / 2);
+                    thumbnail::place(t, (dx, dy, dx + dw, dy + dh), 255)
+                });
+                if !placed {
+                    thumbnail::unregister(t);
+                    thumb = None;
+                }
+            }
+            if !minimized && thumb.is_none() {
+                if let Some(shot) = nacre_platform::wins::snapshot::capture(*hwnd, 3)
+                    .filter(|shot| !crate::stage::blank(&shot.bmp))
+                {
+                    if let Ok(surface) = gfx.surface_from_bgra(shot.bmp.w, shot.bmp.h, &shot.bmp.bgra) {
+                        if let Ok(brush) = comp.CreateSurfaceBrushWithSurface(&surface) {
+                            let _ = brush.SetStretch(CompositionStretch::Uniform);
+                            if let Ok(sprite) = comp.CreateSpriteVisual() {
+                                let _ = sprite.SetBrush(&brush);
+                                let _ = sprite.SetSize(Vector2 { X: tw as f32, Y: th as f32 });
+                                let _ = sprite.SetOffset(Vector3 { X: x0 as f32, Y: pad as f32, Z: 0.0 });
+                                let _ = self.popup.content.Children()?.InsertAtTop(&sprite);
+                            }
+                        }
+                    }
+                }
             }
             if let Some(bmp) = render(title, &style, tw, title_h) {
                 let surface = gfx.surface_from_bgra(bmp.w, bmp.h, &bmp.bgra)?;

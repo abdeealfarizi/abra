@@ -99,6 +99,7 @@ enum Action {
     Dock(Behavior),
     Notch(Behavior),
     Rail(Behavior),
+    Monitor(u8, u8),
     Theme(Theme),
     Lang(Lang),
     Tab(u8),
@@ -688,10 +689,17 @@ impl Win {
 
     fn page(&self, page: u8) -> Vec<(Option<&'static str>, Vec<RowDef>)> {
         let s = prefs::get();
-        let behaviors = |dock: bool| -> Vec<(&'static str, Action)> {
+        let behaviors = |target: u8| -> Vec<(&'static str, Action)> {
             [(prefs::tr("Tetap"), Behavior::Fixed), (prefs::tr("Menimpa"), Behavior::Overlay), (prefs::tr("Pintar"), Behavior::Smart)]
                 .into_iter()
-                .map(|(t, b)| (t, if dock { Action::Dock(b) } else { Action::Notch(b) }))
+                .map(|(t, b)| {
+                    let action = match target {
+                        0 => Action::Dock(b),
+                        1 => Action::Notch(b),
+                        _ => Action::Rail(b),
+                    };
+                    (t, action)
+                })
                 .collect()
         };
         let beh_idx = |b: Behavior| match b {
@@ -699,9 +707,30 @@ impl Win {
             Behavior::Overlay => 1,
             Behavior::Smart => 2,
         };
+        let monitor_choices = |component: u8, current: u8| {
+            let count = crate::display::monitors().len().clamp(1, 8);
+            let mut options: Vec<(&'static str, Action)> = (0..count).map(|i| {
+                let label = match i {
+                    0 => prefs::tr("Layar Utama"), 1 => prefs::tr("Layar 2"), 2 => prefs::tr("Layar 3"),
+                    3 => prefs::tr("Layar 4"), 4 => prefs::tr("Layar 5"), 5 => prefs::tr("Layar 6"),
+                    6 => prefs::tr("Layar 7"), _ => prefs::tr("Layar 8"),
+                };
+                (label, Action::Monitor(component, i as u8))
+            }).collect();
+            let selected = if current == u8::MAX { count } else { (current as usize).min(count - 1) };
+            options.push((prefs::tr("Semua layar"), Action::Monitor(component, u8::MAX)));
+            (options, selected)
+        };
         match page {
             0 => vec![
-                (None, vec![RowDef::Seg(prefs::tr("Bahasa"), vec![("Indonesia", Action::Lang(Lang::Id)), ("English", Action::Lang(Lang::En))], if s.lang == Lang::Id { 0 } else { 1 })]),
+                (
+                    None,
+                    vec![RowDef::Seg(
+                        prefs::tr("Bahasa"),
+                        vec![("Indonesia", Action::Lang(Lang::Id)), ("English", Action::Lang(Lang::En)), ("Español", Action::Lang(Lang::Es))],
+                        match s.lang { Lang::Id => 0, Lang::En => 1, Lang::Es => 2 },
+                    )],
+                ),
                 (
                     Some(prefs::tr("Sistem")),
                     vec![
@@ -723,8 +752,11 @@ impl Win {
                     Some(prefs::tr("Tentang")),
                     {
                         use crate::updater::Phase;
-                        let en = s.lang == Lang::En;
-                        let ver: &'static str = if en { concat!("Version ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access") } else { concat!("Versi ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access") };
+                        let ver: &'static str = match s.lang {
+                            Lang::Id => concat!("Versi ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
+                            Lang::En => concat!("Version ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
+                            Lang::Es => concat!("Versión ", env!("CARGO_PKG_VERSION"), " \u{00B7} Acceso anticipado"),
+                        };
                         let button = match crate::updater::phase() {
                             Phase::Idle => prefs::tr("Periksa pembaruan").to_string(),
                             Phase::Checking => prefs::tr("Memeriksa\u{2026}").to_string(),
@@ -748,7 +780,8 @@ impl Win {
                     None,
                     vec![
                         RowDef::Toggle(prefs::tr("Aktifkan Deck"), s.dock_enabled, Action::DockOn),
-                        RowDef::Seg(prefs::tr("Perilaku"), behaviors(true), beh_idx(s.dock)),
+                        RowDef::Seg(prefs::tr("Perilaku"), behaviors(0), beh_idx(s.dock)),
+                        { let (o, i) = monitor_choices(0, s.dock_monitor); RowDef::Seg(prefs::tr("Layar"), o, i) },
                         RowDef::Seg(prefs::tr("Efek minimize"), vec![(prefs::tr("Funnel"), Action::MinEffect(0)), (prefs::tr("Skala"), Action::MinEffect(1))], s.min_effect as usize),
                         RowDef::Toggle(prefs::tr("Ikon seragam (squircle)"), s.dock_plates, Action::DockPlates),
                         RowDef::Toggle(prefs::tr("Tumpukan Unduhan"), s.downloads_stack, Action::DownloadsStack),
@@ -771,8 +804,9 @@ impl Win {
                 vec![
                     RowDef::Toggle(prefs::tr("Aktifkan Visor"), s.notch_enabled, Action::NotchOn),
                     RowDef::Seg(prefs::tr("Bentuk"), vec![(prefs::tr("Visor"), Action::NotchShape(false)), (prefs::tr("Capsule"), Action::NotchShape(true))], if s.notch_island { 1 } else { 0 }),
-                    RowDef::Seg(prefs::tr("Perilaku"), behaviors(false), beh_idx(s.notch)),
+                    RowDef::Seg(prefs::tr("Perilaku"), behaviors(1), beh_idx(s.notch)),
                     RowDef::Slider(prefs::tr("Ukuran"), s.notch_scale, 12),
+                    { let (o, i) = monitor_choices(1, s.notch_monitor); RowDef::Seg(prefs::tr("Layar"), o, i) },
                     RowDef::Slider(prefs::tr("Kebulatan sudut"), s.notch_round, 3),
                 ]
                 .into_iter()
@@ -836,6 +870,7 @@ impl Win {
                     None,
                     vec![
                         RowDef::Toggle(prefs::tr("Aktifkan Rail"), s.menubar, Action::MenuBarOn),
+                        { let (o, i) = monitor_choices(2, s.menubar_monitor); RowDef::Seg(prefs::tr("Layar"), o, i) },
                         RowDef::Seg(
                             prefs::tr("Perilaku"),
                             [(prefs::tr("Tetap"), Behavior::Fixed), (prefs::tr("Menimpa"), Behavior::Overlay), (prefs::tr("Pintar"), Behavior::Smart)]
@@ -1599,6 +1634,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 Some(Action::Dock(b)) => prefs::update(|s| s.dock = b),
                 Some(Action::Notch(b)) => prefs::update(|s| s.notch = b),
                 Some(Action::Rail(b)) => prefs::update(|s| s.rail = b),
+                Some(Action::Monitor(c, target)) => prefs::update(|s| match c { 0 => s.dock_monitor = target, 1 => s.notch_monitor = target, _ => s.menubar_monitor = target }),
                 Some(Action::Theme(t)) => prefs::update(|s| s.theme = t),
                 Some(Action::Lang(l)) => prefs::update(|s| s.lang = l),
                 Some(Action::WinShadow) => prefs::update(|s| s.win_shadow = !s.win_shadow),

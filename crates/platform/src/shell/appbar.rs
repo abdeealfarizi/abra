@@ -1,42 +1,35 @@
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::Mutex;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW;
 
-static BOTTOM: AtomicIsize = AtomicIsize::new(0);
-static TOP: AtomicIsize = AtomicIsize::new(0);
+static BOTTOM: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+static TOP: Mutex<Vec<isize>> = Mutex::new(Vec::new());
 
 fn data(h: HWND) -> APPBARDATA {
     APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: h, ..Default::default() }
 }
 
-fn reserve(slot: &AtomicIsize, hwnd: HWND, top_edge: bool, screen_w: i32, screen_h: i32, strip_h: i32) -> Option<i32> {
+fn reserve(slot: &Mutex<Vec<isize>>, hwnd: HWND, top_edge: bool, bounds: RECT, strip_h: i32) -> Option<i32> {
+    let mut registered = slot.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         let mut abd = data(hwnd);
         abd.uCallbackMessage = RegisterWindowMessageW(w!("NacreAppBar"));
-        let old = slot.load(Ordering::Relaxed);
-        if old != hwnd.0 as isize {
-            if old != 0 {
-                let mut prev = data(HWND(old as *mut _));
-                let _ = SHAppBarMessage(ABM_REMOVE, &mut prev);
-            }
-            let _ = SHAppBarMessage(ABM_REMOVE, &mut abd);
-            if SHAppBarMessage(ABM_NEW, &mut abd) == 0 {
-                return None;
-            }
-            slot.store(hwnd.0 as isize, Ordering::Relaxed);
+        if !registered.contains(&(hwnd.0 as isize)) {
+            if SHAppBarMessage(ABM_NEW, &mut abd) == 0 { return None; }
+            registered.push(hwnd.0 as isize);
         }
         if top_edge {
             abd.uEdge = ABE_TOP;
-            abd.rc = RECT { left: 0, top: 0, right: screen_w, bottom: strip_h };
+            abd.rc = RECT { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.top + strip_h };
             SHAppBarMessage(ABM_QUERYPOS, &mut abd);
             abd.rc.bottom = abd.rc.top + strip_h;
             SHAppBarMessage(ABM_SETPOS, &mut abd);
             Some(abd.rc.bottom)
         } else {
             abd.uEdge = ABE_BOTTOM;
-            abd.rc = RECT { left: 0, top: screen_h - strip_h, right: screen_w, bottom: screen_h };
+            abd.rc = RECT { left: bounds.left, top: bounds.bottom - strip_h, right: bounds.right, bottom: bounds.bottom };
             SHAppBarMessage(ABM_QUERYPOS, &mut abd);
             abd.rc.top = abd.rc.bottom - strip_h;
             SHAppBarMessage(ABM_SETPOS, &mut abd);
@@ -45,39 +38,28 @@ fn reserve(slot: &AtomicIsize, hwnd: HWND, top_edge: bool, screen_w: i32, screen
     }
 }
 
-pub fn reserve_bottom(hwnd: HWND, screen_w: i32, screen_h: i32, strip_h: i32) -> Option<i32> {
-    reserve(&BOTTOM, hwnd, false, screen_w, screen_h, strip_h)
+pub fn reserve_bottom(hwnd: HWND, bounds: RECT, strip_h: i32) -> Option<i32> {
+    reserve(&BOTTOM, hwnd, false, bounds, strip_h)
 }
 
-pub fn reserve_top(hwnd: HWND, screen_w: i32, strip_h: i32) -> Option<i32> {
-    reserve(&TOP, hwnd, true, screen_w, 0, strip_h)
+pub fn reserve_top(hwnd: HWND, bounds: RECT, strip_h: i32) -> Option<i32> {
+    reserve(&TOP, hwnd, true, bounds, strip_h)
 }
 
-fn remove(slot: &AtomicIsize) {
-    let h = slot.swap(0, Ordering::Relaxed);
-    if h != 0 {
+fn remove(slot: &Mutex<Vec<isize>>, hwnd: Option<HWND>) {
+    let mut registered = slot.lock().unwrap_or_else(|e| e.into_inner());
+    let removed: Vec<isize> = match hwnd {
+        Some(h) => { registered.retain(|id| *id != h.0 as isize); vec![h.0 as isize] }
+        None => std::mem::take(&mut *registered),
+    };
+    for raw in removed {
         unsafe {
-            let mut abd = data(HWND(h as *mut _));
-            SHAppBarMessage(ABM_REMOVE, &mut abd);
+            let mut abd = data(HWND(raw as *mut _));
+            let _ = SHAppBarMessage(ABM_REMOVE, &mut abd);
         }
     }
 }
 
-pub fn release_top() {
-    remove(&TOP);
-}
-
-pub fn release_top_if(hwnd: HWND) {
-    if TOP.load(Ordering::Relaxed) == hwnd.0 as isize {
-        remove(&TOP);
-    }
-}
-
-pub fn release_bottom() {
-    remove(&BOTTOM);
-}
-
-pub fn release() {
-    remove(&BOTTOM);
-    remove(&TOP);
-}
+pub fn release_top(hwnd: Option<HWND>) { remove(&TOP, hwnd); }
+pub fn release_bottom(hwnd: Option<HWND>) { remove(&BOTTOM, hwnd); }
+pub fn release() { remove(&BOTTOM, None); remove(&TOP, None); }

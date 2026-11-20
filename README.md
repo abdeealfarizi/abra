@@ -195,7 +195,9 @@ Protection history*, but only after the fingerprint check above matches.
 - The Windows taskbar hides and the Rail, Visor and Deck appear. The Deck hides itself until you move the pointer to the
   bottom of the screen (turn the takeover off in *Settings → General* if you prefer your taskbar).
 - Open **Settings**: right‑click the Deck → **ABRA Settings…**, or click the logo in the Rail.
-- Language: *Settings → General → Language* (**English** or **Indonesia**).
+- Language: *Settings → General → Language* (**English**, **Indonesia** or **Español**).
+- Multiple displays: select the screen for Deck, Visor and Rail in their settings, or choose **All displays**.
+- Quick Search looks for files on connected local and removable drives while skipping system and build folders.
 
 ### Updating from an older version
 
@@ -375,7 +377,7 @@ The glass pill at the top center of the screen. Choose **Visor** (attached to th
 - *Settings → Appearance*: Auto · Light · Dark, accent color, icon style (Default · Dark · Clear · Tinted), the glass
   material (**Blur**, **Crystal** or **Black**), a separate Visor material, blur, transparency, the **scale** of the Deck,
   Visor, Rail and Quick Panel, and an optional **icon pack** (`%APPDATA%\ABRA\iconpack`, nothing is bundled).
-- Settings has a floating glass sidebar with search, back / forward buttons, English and Indonesian.
+- Settings has a floating glass sidebar with search, back / forward buttons, and English, Indonesian and Spanish.
 - **Quick shortcuts**: `` Alt+` `` cycles windows of the same app, `Ctrl+Alt+H` hides, `Ctrl+Alt+M` minimizes,
   `Ctrl+Alt+Q` quits the active app (*Settings → General*).
 

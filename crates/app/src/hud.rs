@@ -26,6 +26,7 @@ use windows_numerics::{Vector2, Vector3};
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const WM_DISPLAYCHANGE: u32 = 0x007E;
 const HUD_MOUSE: u32 = WM_APP + 30;
+const HUD_HIDE: u32 = WM_APP + 35;
 const STRIP_L_ENTER: u32 = WM_APP + 31;
 const STRIP_L_LEAVE: u32 = WM_APP + 32;
 const STRIP_R_ENTER: u32 = WM_APP + 33;
@@ -112,6 +113,13 @@ unsafe extern "system" fn bar_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRE
 
 static CTL: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
+pub fn hide_osd() {
+    let hwnd = HWND(CTL.load(Ordering::Relaxed) as *mut _);
+    if !hwnd.0.is_null() {
+        unsafe { let _ = PostMessageW(Some(hwnd), HUD_HIDE, WPARAM(0), LPARAM(0)); }
+    }
+}
+
 fn glyph_for(kind: Kind, level: f32, muted: bool) -> &'static str {
     match kind {
         Kind::Brightness => "\u{E706}",
@@ -129,7 +137,7 @@ impl Hud {
             let ctl_class = w!("NacreHudCtl");
             unsafe extern "system" fn ctl_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                 match m {
-                    WM_VOLUME | WM_BRIGHT | HUD_MOUSE | WM_TIMER | STRIP_L_ENTER | STRIP_L_LEAVE | STRIP_R_ENTER
+                    WM_VOLUME | WM_BRIGHT | HUD_MOUSE | HUD_HIDE | WM_TIMER | STRIP_L_ENTER | STRIP_L_LEAVE | STRIP_R_ENTER
                     | STRIP_R_LEAVE | WM_DISPLAYCHANGE | crate::prefs::WM_PREFS => {
                         let p = GetWindowLongPtrW(h, GWLP_USERDATA) as *mut Hud;
                         if !p.is_null() {
@@ -235,6 +243,7 @@ impl Hud {
             hud.update_title(1);
             SetWindowLongPtrW(ctl, GWLP_USERDATA, Box::into_raw(hud) as isize);
             services::register_hud(ctl);
+            osd::init();
             crate::prefs::listen(ctl);
             log::line("hud", &format!("dibuat tier={tier:?} dpi={dpi}"));
             Ok(ctl)
@@ -360,6 +369,20 @@ impl Hud {
         self.schedule_hide(i);
     }
 
+    fn hide_all(&mut self) {
+        for (i, bar) in self.bars.iter_mut().enumerate() {
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), T_HIDE0 + i);
+                let _ = KillTimer(Some(self.hwnd), T_FIN0 + i);
+            }
+            if bar.shown {
+                bar.shown = false;
+                bar.popup.hide();
+            }
+        }
+        self.dragging = None;
+    }
+
     fn schedule_hide(&self, i: usize) {
         if let Some(ms) = self.bars[i].time.remaining(self.now()) {
             unsafe {
@@ -409,6 +432,10 @@ impl Hud {
                 if ENABLED.load(Ordering::Relaxed) {
                     osd::hide_native();
                 }
+                if crate::controlcenter::is_open() {
+                    self.hide_all();
+                    return;
+                }
                 self.update_values(true);
                 self.show(0);
             }
@@ -416,9 +443,14 @@ impl Hud {
                 if ENABLED.load(Ordering::Relaxed) {
                     osd::hide_native();
                 }
+                if crate::controlcenter::is_open() {
+                    self.hide_all();
+                    return;
+                }
                 self.update_values(true);
                 self.show(1);
             }
+            HUD_HIDE => self.hide_all(),
             HUD_MOUSE => {
                 let (i, kind) = (w.0 >> 8, w.0 & 0xFF);
                 let y = l.0 as f32;

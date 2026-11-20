@@ -229,6 +229,7 @@ pub struct Menu {
     highlight: SpriteVisual,
     dpi: f32,
     screen: (i32, i32),
+    screen_origin: (i32, i32),
     card: Option<Card>,
     closing: bool,
     pop_at: Vector3,
@@ -247,7 +248,12 @@ impl Menu {
         let content = comp.CreateContainerVisual()?;
         popup.content.Children()?.InsertAtTop(&highlight)?;
         popup.content.Children()?.InsertAtTop(&content)?;
-        Ok(Menu { target: dock_hwnd, popup, content, highlight, dpi, screen, card: None, closing: false, pop_at: Vector3 { X: 0.0, Y: 0.0, Z: 0.0 } })
+        Ok(Menu { target: dock_hwnd, popup, content, highlight, dpi, screen, screen_origin: (0, 0), card: None, closing: false, pop_at: Vector3 { X: 0.0, Y: 0.0, Z: 0.0 } })
+    }
+
+    pub fn set_bounds(&mut self, origin: (i32, i32), size: (i32, i32)) {
+        self.screen_origin = origin;
+        self.screen = size;
     }
 
     pub fn set_card(&mut self, card: Option<Card>) {
@@ -450,8 +456,12 @@ impl Menu {
         let (wi, hi) = (w.ceil() as i32, h.ceil() as i32);
         let anchor = x;
         let x = if right_aligned { x - wi } else { x };
-        let px = x.clamp(4, (self.screen.0 - wi - 4).max(4));
-        let py = if above { (y - hi).clamp(4, (self.screen.1 - hi - 4).max(4)) } else { y.clamp(0, (self.screen.1 - hi - 4).max(0)) };
+        let min_x = self.screen_origin.0 + 4;
+        let min_y = self.screen_origin.1 + 4;
+        let max_x = (self.screen_origin.0 + self.screen.0 - wi - 4).max(min_x);
+        let max_y = (self.screen_origin.1 + self.screen.1 - hi - 4).max(min_y);
+        let px = x.clamp(min_x, max_x);
+        let py = if above { (y - hi).clamp(min_y, max_y) } else { y.clamp(self.screen_origin.1, max_y) };
         self.popup.set_rect(px, py, wi, hi)?;
         self.popup.panel.set_radius(radius)?;
         self.highlight.SetOpacity(0.0)?;
