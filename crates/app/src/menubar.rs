@@ -664,20 +664,14 @@ impl Bar {
         )
         .overlapped;
         let inputs = Inputs {
-            overlapped: overlapped
-                || (behavior == Behavior::Smart
-                    && crate::presence::has_visible_app_on(windows::Win32::Foundation::RECT {
-                        left: self.screen_origin.0,
-                        top: self.screen_origin.1,
-                        right: self.screen_origin.0 + self.screen.0,
-                        bottom: self.screen_origin.1 + self.screen.1,
-                    })),
+            overlapped,
             interacting: self.interacting(),
             edge_armed: self.edge_armed,
             fullscreen: self.fullscreen,
             ..Default::default()
         };
-        let hide = !self.is_selected() || policy::should_hide(behavior.mode(), &inputs);
+        let mode = if behavior == Behavior::Smart { policy::Mode::OnDemand } else { behavior.mode() };
+        let hide = !self.is_selected() || policy::should_hide(mode, &inputs);
         self.place_strip();
         if hide && self.shown {
             self.shown = false;

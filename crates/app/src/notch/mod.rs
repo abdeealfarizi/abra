@@ -467,7 +467,7 @@ impl Notch {
                 vis: opts.mode,
                 reserved: false,
                 island_shape: crate::prefs::get().notch_island,
-                off: { let s = crate::prefs::get(); !s.notch_enabled || (s.notch_monitor != u8::MAX && s.notch_monitor != monitor_index) },
+                off: { let s = crate::prefs::get(); !s.notch_enabled || (s.notch != nacre_core::settings::Behavior::Smart && s.notch_monitor != u8::MAX && s.notch_monitor != monitor_index) },
                 shown: true,
                 starting: true,
                 overlap: overlap::Overlap::default(),
@@ -1925,7 +1925,7 @@ impl Notch {
 
     fn apply_prefs(&mut self) {
         let s = crate::prefs::get();
-        self.off = !s.notch_enabled || (s.notch_monitor != u8::MAX && s.notch_monitor != self.monitor_index);
+        self.off = !s.notch_enabled || (s.notch != nacre_core::settings::Behavior::Smart && s.notch_monitor != u8::MAX && s.notch_monitor != self.monitor_index);
         let selected_here = s.notch_monitor == u8::MAX || s.notch_monitor == self.monitor_index;
         if s.notch_monitor == self.monitor_index || (s.notch_monitor == u8::MAX && self.monitor_index == 0) { NOTCH_HWND.store(self.hwnd.0 as isize, Ordering::Relaxed); }
         let (vis, reserve) = (s.notch.mode(), selected_here && s.notch.reserves() && s.notch_enabled && !s.menubar);
@@ -2063,9 +2063,9 @@ impl Notch {
                 }
                 if ov != self.overlap {
                     self.overlap = ov;
-                    self.update_visibility();
                     self.sync_visualizer();
                 }
+                self.update_visibility();
             }
             T_RECONF => self.on_reconfigure(),
             T_EDGE => {
