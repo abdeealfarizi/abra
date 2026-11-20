@@ -241,6 +241,7 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
         prefs::listen(hwnd);
         tracker::install(noop_fg);
         tracker::install_fx(loc_hook);
+        crate::presence::refresh();
         BAR_CTL.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
         *MOUSE_HOOK.lock().unwrap_or_else(|e| e.into_inner()) = nacre_platform::hookthread::HookThread::start(nacre_platform::hookthread::Kind::Mouse, Some(ll_mouse));
         apply_prefs();
