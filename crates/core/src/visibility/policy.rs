@@ -24,6 +24,7 @@ pub struct Inputs {
     pub starting: bool,
     pub fullscreen: bool,
     pub revealing: bool,
+    pub desktop_empty: bool,
 }
 
 pub fn should_hide(mode: Mode, i: &Inputs) -> bool {
@@ -38,7 +39,7 @@ pub fn should_hide(mode: Mode, i: &Inputs) -> bool {
     }
     match mode {
         Mode::Always => false,
-        Mode::AutoHide => !i.interacting && !i.edge_armed,
+        Mode::AutoHide => !i.desktop_empty && !i.interacting && !i.edge_armed,
         Mode::OnDemand => !i.interacting && !i.edge_armed,
     }
 }

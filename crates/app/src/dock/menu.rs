@@ -199,6 +199,10 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                     }
                 }
             });
+            // Dismiss the context menu when the pointer leaves its bounds.
+            // The menu is positioned next to the click, so it can be entered
+            // without a separate hover delay.
+            let _ = PostMessageW(Some(target), MENU_CLOSE, WPARAM(0), LPARAM(0));
             LRESULT(0)
         }
         WM_LBUTTONUP | WM_RBUTTONUP => {
@@ -493,6 +497,7 @@ impl Menu {
             self.popup.show();
             self.popup.fade_in(comp, !above);
         }
+        self.raise();
         nacre_platform::input::begin_dismiss((px, py, px + wi, py + hi), self.target.0 as isize, MENU_CLOSE);
         Ok(())
     }

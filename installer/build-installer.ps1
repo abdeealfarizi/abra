@@ -6,15 +6,22 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Source = Join-Path $root "target\release"
-$dist = Join-Path $root "dist"
+$dist = Join-Path $root "dist\local-test"
 
 $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
 if (-not $iscc) {
-  foreach ($p in @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
+  foreach ($p in @(
+    "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+  )) {
     if (Test-Path $p) { $iscc = $p; break }
   }
 }
-if (-not $iscc) { throw "Inno Setup 6 not found. Install it from https://jrsoftware.org/isinfo.php (or: winget install JRSoftware.InnoSetup)." }
+if (-not $iscc) { throw "Inno Setup 7 or 6 not found. Install it from https://jrsoftware.org/isinfo.php." }
 
 if (-not $NoBuild) {
   $sep = [char]0x1f
@@ -48,7 +55,7 @@ foreach ($f in $files) {
 Write-Host "Privacy check passed: no local paths or user name inside the binaries."
 
 New-Item -ItemType Directory -Force $dist | Out-Null
-& $iscc "/DAppVersion=$Version" "/DSourceDir=$Source" (Join-Path $PSScriptRoot "ABRA.iss")
+& $iscc "/DAppVersion=$Version" "/DSourceDir=$Source" "--output-dir=$dist" (Join-Path $PSScriptRoot "ABRA.iss")
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
 $stage = Join-Path $dist "ABRA-$Version"
@@ -62,4 +69,4 @@ Remove-Item -Force $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 Remove-Item -Recurse -Force $stage
 
-Write-Host "Done: dist\ABRA-Setup-$Version.exe and dist\ABRA-$Version-win-x64.zip"
+Write-Host "Done: dist\local-test\ABRA-Setup-$Version.exe and dist\local-test\ABRA-$Version-win-x64.zip"

@@ -62,6 +62,7 @@ const TIMER_REGION: usize = 109;
 const TIMER_RECONF: usize = 110;
 const TIMER_TRASH: usize = 111;
 const TIMER_REVEAL: usize = 112;
+const TIMER_CENTER: usize = 113;
 const TRASH_POLL_MS: u32 = 4000;
 const WM_DISPLAYCHANGE: u32 = 0x007E;
 const WM_DPICHANGED: u32 = 0x02E0;
@@ -203,6 +204,8 @@ pub struct Dock {
     preview: Option<Preview>,
     menu: Option<Menu>,
     pending_menu: Option<MenuInfo>,
+    center_pending: Option<(String, Instant)>,
+    center_target: Option<isize>,
 }
 
 fn f32_ref(v: f32) -> windows_core::Result<windows::Foundation::IReference<f32>> {
@@ -423,6 +426,8 @@ impl Dock {
                 preview: None,
                 menu: None,
                 pending_menu: None,
+                center_pending: None,
+                center_target: None,
             });
             dock.compute_geometry();
             dock.refresh_windows();
@@ -566,10 +571,20 @@ impl Dock {
         let (l, t, r, b) = if full || self.layout.cells.is_empty() {
             (0, 0, self.win.0, self.win.1)
         } else {
-            let rest = layout(&self.slots, None, self.win.0 as f32, &self.m);
-            let cw = rest.total + 2.0 * self.pad_side;
+            // Keep the clipped window region aligned with the live, magnified
+            // layout. Using the resting width here cuts off the end icons when
+            // the pointer moves from an icon into its preview or context menu.
+            let cw = self.layout.total + 2.0 * self.pad_side;
             let cx = (self.win.0 as f32 - cw) / 2.0;
-            (cx as i32, self.card_y as i32, (cx + cw).ceil() as i32, (self.card_y + self.card_h).ceil() as i32)
+            let scale = self.layout.cells.iter().map(|cell| cell.scale).fold(1.0f32, f32::max);
+            let grow = self.m.icon * (scale - 1.0).max(0.0);
+            let top_guard = 14.0 * self.dpi;
+            let top = (self.card_y as f32).min(self.icon_y - grow / 2.0 - top_guard).floor().max(0.0) as i32;
+            let bottom = (self.card_y + self.card_h)
+                .max(self.icon_y + self.m.icon * scale)
+                .ceil()
+                .min(self.win.1 as f32) as i32;
+            (cx.floor() as i32, top, (cx + cw).ceil() as i32, bottom)
         };
         unsafe {
             let rgn = CreateRectRgn(l, t, r, b);
@@ -624,6 +639,7 @@ impl Dock {
             starting: self.starting,
             fullscreen: self.overlap.fullscreen,
             revealing: self.revealing,
+            desktop_empty: false,
         };
         let hide = self.off || should_hide(self.opts.mode, &inputs);
         self.sync_strip();
@@ -652,6 +668,15 @@ impl Dock {
 
     pub fn refresh_windows(&mut self) {
         let all_wins = enumerate::list(std::process::id());
+        if let Some((path, expires)) = self.center_pending.clone() {
+            if Instant::now() >= expires {
+                self.center_pending = None;
+            } else if let Some(win) = all_wins.iter().find(|w| key_of(&w.path) == path && !focus::is_minimized(w.hwnd)) {
+                self.center_pending = None;
+                self.center_target = Some(win.hwnd);
+                timer(self.hwnd, TIMER_CENTER, 180);
+            }
+        }
         let open_keys: HashSet<String> = all_wins.iter().map(|w| key_of(&w.path)).collect();
         let bounds = windows::Win32::Foundation::RECT {
             left: self.screen_origin.0,
@@ -1054,20 +1079,20 @@ impl Dock {
         }
     }
 
-    fn show_preview(&mut self) {
-        let Some(slot) = self.hover else { return };
+    fn show_preview(&mut self) -> bool {
+        let Some(slot) = self.hover else { return false };
         if self.dragging.is_some() {
-            return;
+            return false;
         }
-        let Some(Entry::App(i)) = self.entries.get(slot).copied() else { return };
-        let Some(it) = self.items.get(i) else { return };
+        let Some(Entry::App(i)) = self.entries.get(slot).copied() else { return false };
+        let Some(it) = self.items.get(i) else { return false };
         if !it.running() {
-            return;
+            return false;
         }
         let wins: Vec<(isize, String, bool)> =
             it.hwnds.iter().map(|h| (*h, focus::title(*h), focus::is_minimized(*h))).collect();
         let icon = self.surfaces.get(&it.path).cloned();
-        let Some((cx, top)) = self.icon_anchor(slot) else { return };
+        let Some((cx, top)) = self.icon_anchor(slot) else { return false };
         if self.preview.is_none() {
             self.preview = Preview::new(&self.comp, self.hwnd, self.dpi, self.screen_origin, self.screen.0).ok().map(|mut p| {
                 let _ = p.panel_mut().set_tier(self.tier);
@@ -1081,8 +1106,10 @@ impl Dock {
             let bottom = top - (10.0 * self.dpi) as i32;
             if let Err(e) = p.show(&self.comp, &self.gfx, &wins, icon.as_ref(), cx, bottom) {
                 log::line("preview", &format!("gagal: {e}"));
+                return false;
             }
         }
+        true
     }
 
     fn entry_at(&self, x: f32) -> Option<(usize, Entry)> {
@@ -1095,6 +1122,7 @@ impl Dock {
             self.drag_update(x, y);
             return;
         }
+        kill(self.hwnd, TIMER_PCLOSE);
         if !self.region_full {
             kill(self.hwnd, TIMER_REGION);
             self.set_region(true);
@@ -1114,8 +1142,10 @@ impl Dock {
             if slot.is_some() {
                 let preview_up = self.preview.as_ref().is_some_and(|p| p.is_visible());
                 if preview_up {
-                    self.show_preview();
-                    if !self.preview.as_ref().is_some_and(|p| p.is_visible()) {
+                    if !self.show_preview() {
+                        if let Some(p) = self.preview.as_mut() {
+                            p.hide();
+                        }
                         timer(self.hwnd, TIMER_TIP, 250);
                     }
                 } else {
@@ -1145,24 +1175,59 @@ impl Dock {
             return;
         }
         self.cursor = None;
-        self.hover = None;
         kill(self.hwnd, TIMER_TIP);
         kill(self.hwnd, TIMER_PREVIEW);
         if let Some(t) = &self.tooltip {
             t.hide();
         }
-        if self.preview.as_ref().is_some_and(|p| p.is_visible()) {
+        let preview_visible = self.preview.as_ref().is_some_and(|p| p.is_visible());
+        if preview_visible {
             timer(self.hwnd, TIMER_PCLOSE, 200);
         }
+        if self.menu_open || preview_visible || self.preview_hover {
+            timer(self.hwnd, TIMER_REGION, 450);
+            self.start_grace();
+            self.update_visibility();
+            return;
+        }
+        self.reset_hover();
+        timer(self.hwnd, TIMER_REGION, 450);
+        self.start_grace();
+        self.update_visibility();
+    }
+
+    fn reset_hover(&mut self) {
+        self.hover = None;
+        self.cursor = None;
         if self.exprs_ok {
             self.set_influence(false);
             self.layout = layout(&self.slots, None, self.win.0 as f32, &self.m);
         } else {
             self.apply(None, true);
         }
-        timer(self.hwnd, TIMER_REGION, 450);
-        self.start_grace();
-        self.update_visibility();
+    }
+
+    fn reset_hover_after_popups(&mut self) {
+        if !self.tracking && !self.menu_open && !self.preview_hover {
+            self.reset_hover();
+            timer(self.hwnd, TIMER_REGION, 450);
+            self.update_visibility();
+        }
+    }
+
+    fn hold_hover_on_icon(&mut self) {
+        let Some(slot) = self.hover else { return };
+        let rest = layout(&self.slots, None, self.win.0 as f32, &self.m);
+        let Some(cell) = rest.cells.get(slot) else { return };
+        let cx = cell.x + cell.w / 2.0;
+        self.cursor = Some(cx);
+        if self.exprs_ok {
+            self.layout = layout(&self.slots, Some(cx), self.win.0 as f32, &self.m);
+            let _ = self.props.InsertScalar(&HSTRING::from("cx"), cx);
+            self.set_influence(true);
+        } else {
+            self.apply(Some(cx), true);
+        }
     }
 
     fn on_down(&mut self, x: f32, y: f32) {
@@ -1287,6 +1352,7 @@ impl Dock {
                     let ok = self.activate_target(target);
                     log::line("dock", &format!("aktifkan {} hwnd={target} ok={ok}", it.name));
                 } else {
+                    self.center_pending = Some((key_of(&it.path), Instant::now() + Duration::from_secs(12)));
                     launch::open(&it.path);
                     if let Some(v) = self.views.get(idx) {
                         let _ = v.bounce(self.icon_y);
@@ -1341,6 +1407,10 @@ impl Dock {
     fn open_menu(&mut self, x: f32) {
         self.menu_open = true;
         self.hide_popups();
+        if let Some((slot, _)) = self.entry_at(x) {
+            self.hover = Some(slot);
+        }
+        self.hold_hover_on_icon();
         let info = self.menu_info(x);
         let mut items = Vec::new();
         if info.trash {
@@ -1408,6 +1478,7 @@ impl Dock {
     fn open_stack(&mut self) {
         self.menu_open = true;
         self.hide_popups();
+        self.hold_hover_on_icon();
         let files = nacre_platform::downloads::latest(10);
         let mut items = Vec::new();
         self.stack_files.clear();
@@ -1507,6 +1578,7 @@ impl Dock {
     fn on_menu_pick(&mut self, id: usize) {
         log::line("dock", &format!("menu: pilih {id}"));
         self.menu_open = false;
+        self.reset_hover_after_popups();
         self.start_grace();
         if let Some(info) = self.pending_menu.take() {
             self.run_command(id, info);
@@ -1521,6 +1593,7 @@ impl Dock {
         }
         self.menu_open = false;
         self.pending_menu = None;
+        self.reset_hover_after_popups();
         self.start_grace();
         self.update_visibility();
     }
@@ -1630,10 +1703,23 @@ impl Dock {
             }
             CMD_SETTINGS => crate::settings_win::open(&self.comp),
             CMD_TRASH_OPEN => launch::open("shell:RecycleBinFolder"),
-            CMD_TRASH_EMPTY => unsafe {
-                let _ = windows::Win32::UI::Shell::SHEmptyRecycleBinW(Some(self.hwnd), windows::core::PCWSTR::null(), 0);
-                timer(self.hwnd, TIMER_TRASH, 300);
-            },
+            CMD_TRASH_EMPTY => {
+                let hwnd = self.hwnd;
+                crate::confirm::show_action(
+                    &self.comp,
+                    self.opts.monitor.rect,
+                    self.dpi,
+                    "Kosongkan tempat sampah sekarang?",
+                    move || unsafe {
+                        let _ = windows::Win32::UI::Shell::SHEmptyRecycleBinW(
+                            Some(hwnd),
+                            windows::core::PCWSTR::null(),
+                            1,
+                        );
+                        timer(hwnd, TIMER_TRASH, 300);
+                    },
+                );
+            }
             CMD_ADD => {
                 let picked = nacre_platform::pick::open_file(
                     crate::prefs::tr("Pilih aplikasi"),
@@ -1698,13 +1784,14 @@ impl Dock {
         kill(self.hwnd, id);
         match id {
             TIMER_WINDOWS => self.refresh_windows(),
+            TIMER_CENTER => self.center_pending_window(),
             TIMER_APPBAR => {
                 if self.opts.appbar {
                     self.reserve_strip();
                 }
             }
             TIMER_TIP => self.show_tooltip(),
-            TIMER_PREVIEW => self.show_preview(),
+            TIMER_PREVIEW => { self.show_preview(); }
             TIMER_GRACE => {
                 self.grace = false;
                 self.update_visibility();
@@ -1718,6 +1805,7 @@ impl Dock {
                     if let Some(p) = self.preview.as_mut() {
                         p.hide();
                     }
+                    self.reset_hover_after_popups();
                 }
                 self.update_visibility();
             }
@@ -1754,6 +1842,37 @@ impl Dock {
         }
     }
 
+    fn center_pending_window(&mut self) {
+        let Some(hwnd) = self.center_target.take() else { return };
+        let window = HWND(hwnd as *mut _);
+        unsafe {
+            if !IsWindow(Some(window)).as_bool() || IsIconic(window).as_bool() || IsZoomed(window).as_bool() {
+                return;
+            }
+            let mut rect = windows::Win32::Foundation::RECT::default();
+            if GetWindowRect(window, &mut rect).is_err() {
+                return;
+            }
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width <= 0 || height <= 0 {
+                return;
+            }
+            let bounds = self.opts.monitor.rect;
+            let x = (bounds.left + (bounds.right - bounds.left - width) / 2).clamp(bounds.left, (bounds.right - width).max(bounds.left));
+            let y = (bounds.top + (bounds.bottom - bounds.top - height) / 2).clamp(bounds.top, (bounds.bottom - height).max(bounds.top));
+            let _ = SetWindowPos(
+                window,
+                None,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+            );
+        }
+    }
+
     fn on_strip_enter(&mut self) {
         if self.opts.mode != Mode::Always {
             timer(self.hwnd, TIMER_DWELL, 200);
@@ -1776,6 +1895,7 @@ impl Dock {
             log::line("dock", &format!("pratinjau → aktifkan hwnd={h} ok={ok}"));
         }
         self.hide_popups();
+        self.reset_hover_after_popups();
         self.start_grace();
     }
 }
@@ -1892,6 +2012,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             with_dock(hwnd, |d| {
                 d.preview_hover = true;
                 kill(hwnd, TIMER_PCLOSE);
+                d.hold_hover_on_icon();
             });
             LRESULT(0)
         }

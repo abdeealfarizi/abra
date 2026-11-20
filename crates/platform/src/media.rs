@@ -157,9 +157,7 @@ pub fn spawn(notify: impl Fn() + Send + 'static) -> Media {
         loop {
             if pending {
                 pending = false;
-                let current = manager.GetCurrentSession().ok().or_else(|| {
-                    manager.GetSessions().ok().and_then(|v| v.GetAt(0).ok())
-                });
+                let current = current_session(&manager);
                 subs.follow(current.clone(), &tx_for_events);
                 let recheck = PROPS_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed);
                 let snap = build(current.as_ref(), &mut art_state, recheck);
@@ -195,22 +193,27 @@ pub fn spawn(notify: impl Fn() + Send + 'static) -> Media {
     Media { commands: cmd_tx, snapshots: snap_rx }
 }
 
+fn current_session(manager: &GlobalSystemMediaTransportControlsSessionManager) -> Option<GlobalSystemMediaTransportControlsSession> {
+    manager.GetCurrentSession().ok().or_else(|| manager.GetSessions().ok().and_then(|v| v.GetAt(0).ok()))
+}
+
 fn act(manager: &GlobalSystemMediaTransportControlsSessionManager, cmd: Command) {
-    let Ok(s) = manager.GetCurrentSession() else { return };
-    match cmd {
-        Command::PlayPause => {
-            let _ = s.TryTogglePlayPauseAsync();
-        }
-        Command::Next => {
-            let _ = s.TrySkipNextAsync();
-        }
-        Command::Prev => {
-            let _ = s.TrySkipPreviousAsync();
-        }
-        Command::SeekMs(ms) => {
-            let _ = s.TryChangePlaybackPositionAsync(ms * 10_000);
-        }
-        Command::Refresh => {}
+    let Some(s) = current_session(manager) else {
+        crate::log::line("media", "comando ignorado: no hay una sesión multimedia activa");
+        return;
+    };
+    let app = s.SourceAppUserModelId().map(|h| h.to_string()).unwrap_or_else(|_| "app desconocida".into());
+    let (name, result) = match cmd {
+        Command::PlayPause => ("reproducir/pausar", s.TryTogglePlayPauseAsync().and_then(|o| o.join())),
+        Command::Next => ("siguiente", s.TrySkipNextAsync().and_then(|o| o.join())),
+        Command::Prev => ("anterior", s.TrySkipPreviousAsync().and_then(|o| o.join())),
+        Command::SeekMs(ms) => ("buscar", s.TryChangePlaybackPositionAsync(ms * 10_000).and_then(|o| o.join())),
+        Command::Refresh => return,
+    };
+    match result {
+        Ok(true) => {}
+        Ok(false) => crate::log::line("media", &format!("{name} no compatible con {app}")),
+        Err(e) => crate::log::line("media", &format!("falló {name} en {app}: {e}")),
     }
 }
 

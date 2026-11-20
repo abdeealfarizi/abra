@@ -1,5 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
+
+const DRIVE_REMOVABLE: u32 = 2;
+const DRIVE_FIXED: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hit {
@@ -10,24 +15,50 @@ pub struct Hit {
 
 pub fn roots() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
-        for d in ["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"] {
-            let p = home.join(d);
-            if p.is_dir() {
-                v.push(p);
+    unsafe {
+        let mask = GetLogicalDrives();
+        for index in 0..26u32 {
+            if mask & (1 << index) == 0 {
+                continue;
+            }
+            let letter = (b'A' + index as u8) as char;
+            let root = format!("{letter}:\\");
+            let wide: Vec<u16> = root.encode_utf16().chain(std::iter::once(0)).collect();
+            let kind = GetDriveTypeW(PCWSTR(wide.as_ptr()));
+            if kind == DRIVE_FIXED || kind == DRIVE_REMOVABLE {
+                v.push(PathBuf::from(root));
             }
         }
     }
-    if let Some(od) = std::env::var_os("OneDrive").map(PathBuf::from) {
-        if od.is_dir() && !v.iter().any(|p| p.starts_with(&od)) {
-            v.push(od);
+
+    if v.is_empty() {
+        if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+            for d in ["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"] {
+                let p = home.join(d);
+                if p.is_dir() {
+                    v.push(p);
+                }
+            }
+        }
+    }
+    if v.is_empty() {
+        if let Some(od) = std::env::var_os("OneDrive").map(PathBuf::from) {
+            if od.is_dir() {
+                v.push(od);
+            }
         }
     }
     v
 }
 
 fn skip_dir(name: &str) -> bool {
-    name.starts_with('.') || matches!(name, "node_modules" | "target" | "AppData" | "$RECYCLE.BIN" | "System Volume Information")
+    name.starts_with('.')
+        || [
+            "node_modules", "target", "AppData", "$RECYCLE.BIN", "System Volume Information", "Windows",
+            "Program Files", "Program Files (x86)", "ProgramData", "Recovery",
+        ]
+        .iter()
+        .any(|skip| name.eq_ignore_ascii_case(skip))
 }
 
 fn matches(words: &[String], name: &str) -> bool {
@@ -72,7 +103,7 @@ pub fn search_in(roots: &[PathBuf], query: &str, budget: Duration, limit: usize,
 }
 
 pub fn search(query: &str) -> Vec<Hit> {
-    search_in(&roots(), query, Duration::from_millis(450), 20, 5)
+    search_in(&roots(), query, Duration::from_millis(700), 20, 8)
 }
 
 #[allow(dead_code)]

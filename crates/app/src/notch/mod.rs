@@ -1485,6 +1485,13 @@ impl Notch {
     }
 
     fn update_visibility(&mut self) {
+        let desktop_empty = self.vis == Vis::AutoHide
+            && nacre_platform::wins::enumerate::list(std::process::id())
+                .iter()
+                .all(|w| {
+                    nacre_platform::wins::focus::is_minimized(w.hwnd)
+                        || !crate::display::window_is_on(w.hwnd, self.monitor.rect)
+                });
         let inputs = Inputs {
             overlapped: self.overlap.overlapped,
             interacting: self.interacting(),
@@ -1492,6 +1499,7 @@ impl Notch {
             starting: self.starting,
             fullscreen: self.overlap.fullscreen,
             revealing: false,
+            desktop_empty,
         };
         let hide = self.off || should_hide(self.vis, &inputs);
         if let Some(s) = &self.strip {
@@ -1649,9 +1657,9 @@ impl Notch {
                 }
                 if ov != self.overlap {
                     self.overlap = ov;
-                    self.update_visibility();
                     self.sync_visualizer();
                 }
+                self.update_visibility();
             }
             T_RECONF => self.on_reconfigure(),
             T_EDGE => {

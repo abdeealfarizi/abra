@@ -7,7 +7,60 @@ use windows::Web::Http::HttpClient;
 use windows_core::HSTRING;
 
 const NONE_TTL: Duration = Duration::from_secs(3 * 24 * 3600);
+const LYRICS_TTL: Duration = Duration::from_secs(90 * 24 * 3600);
+const CACHE_LIMIT: u64 = 20 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(8);
+
+struct CachedFile {
+    path: PathBuf,
+    key: String,
+    size: u64,
+    modified: SystemTime,
+}
+
+fn prune_cache(dir: &Path, protected_key: Option<&str>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let now = SystemTime::now();
+    let mut files = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else { continue };
+        let ttl = match ext.to_ascii_lowercase().as_str() {
+            "lrc" => LYRICS_TTL,
+            "none" => NONE_TTL,
+            _ => continue,
+        };
+        let Ok(meta) = entry.metadata() else { continue };
+        let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        if now.duration_since(modified).is_ok_and(|age| age >= ttl) {
+            let _ = std::fs::remove_file(path);
+            continue;
+        }
+        let key = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+        files.push(CachedFile { path, key, size: meta.len(), modified });
+    }
+
+    let mut total: u64 = files.iter().map(|file| file.size).sum();
+    if total <= CACHE_LIMIT {
+        return;
+    }
+    files.sort_by_key(|file| file.modified);
+    for file in files {
+        if total <= CACHE_LIMIT {
+            break;
+        }
+        if protected_key == Some(file.key.as_str()) {
+            continue;
+        }
+        if std::fs::remove_file(file.path).is_ok() {
+            total = total.saturating_sub(file.size);
+        }
+    }
+}
 
 pub struct Request {
     pub track: Track,
@@ -112,10 +165,12 @@ fn ask_lrclib(t: &Track) -> Result<Option<lrclib::Found>, ()> {
 fn lookup(dir: &Path, req: &Request) -> Answer {
     let t = &req.track;
     let key = lrclib::cache_key(t);
+    let cache = dir.join("cache");
+    let _ = std::fs::create_dir_all(&cache);
+    prune_cache(&cache, Some(&key));
     if let Some(s) = local_file(dir, t) {
         return Answer { key, text: Some(s), source: Source::Local };
     }
-    let cache = dir.join("cache");
     let hit = cache.join(format!("{key}.lrc"));
     if let Ok(s) = std::fs::read_to_string(&hit) {
         return Answer { key, text: Some(s), source: Source::Lrclib };
@@ -134,12 +189,14 @@ fn lookup(dir: &Path, req: &Request) -> Answer {
             let text = f.text();
             let _ = std::fs::create_dir_all(&cache);
             let _ = std::fs::write(&hit, &text);
+            prune_cache(&cache, Some(&key));
             crate::log::line("lirik", &format!("LRCLIB: ditemukan ({} byte)", text.len()));
             Answer { key, text: Some(text), source: Source::Lrclib }
         }
         Ok(None) => {
             let _ = std::fs::create_dir_all(&cache);
             let _ = std::fs::write(&none, b"");
+            prune_cache(&cache, Some(&key));
             crate::log::line("lirik", "LRCLIB: tidak ada");
             Answer { key, text: None, source: Source::None }
         }
@@ -155,6 +212,7 @@ pub fn spawn(dir: PathBuf, notify: impl Fn() + Send + 'static) -> Lyrics {
     let (ans_tx, ans_rx) = channel::<Answer>();
     let _ = std::fs::create_dir_all(&dir);
     std::thread::spawn(move || {
+        prune_cache(&dir.join("cache"), None);
         let com = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED).is_ok() };
         while let Ok(mut req) = req_rx.recv() {
             while let Ok(newer) = req_rx.try_recv() {

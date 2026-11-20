@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use windows::core::w;
 use windows::UI::Color;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor, ContainerVisual, SpriteVisual};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
@@ -1428,11 +1428,11 @@ impl Bar {
             104 => launch::run("taskmgr.exe", ""),
             105 => crate::launchpad::toggle(),
             106 => crate::mission::toggle(),
-            110 => confirm_power("Tidur sekarang?", "rundll32.exe", "powrprof.dll,SetSuspendState 0,1,0"),
-            111 => confirm_power("Mulai ulang komputer sekarang?", "shutdown.exe", "/r /t 0"),
-            112 => confirm_power("Matikan komputer sekarang?", "shutdown.exe", "/s /t 0"),
+            110 => confirm_power(&self.comp, self.screen_bounds(), self.dpi, "Tidur sekarang?", "rundll32.exe", "powrprof.dll,SetSuspendState 0,1,0"),
+            111 => confirm_power(&self.comp, self.screen_bounds(), self.dpi, "Mulai ulang komputer sekarang?", "shutdown.exe", "/r /t 0"),
+            112 => confirm_power(&self.comp, self.screen_bounds(), self.dpi, "Matikan komputer sekarang?", "shutdown.exe", "/s /t 0"),
             113 => launch::run("rundll32.exe", "user32.dll,LockWorkStation"),
-            114 => confirm_power("Keluar dari akun sekarang?", "shutdown.exe", "/l"),
+            114 => confirm_power(&self.comp, self.screen_bounds(), self.dpi, "Keluar dari akun sekarang?", "shutdown.exe", "/l"),
             800 | 801 => {
                 if let Some(rd) = &self.radios {
                     let (k, cur) = if cmd == 800 { (nacre_platform::radio::Kind::Wifi, self.wifi) } else { (nacre_platform::radio::Kind::Bluetooth, self.bt) };
@@ -1508,15 +1508,8 @@ impl Bar {
     }
 }
 
-fn confirm_power(question: &'static str, file: &'static str, params: &'static str) {
-    let text = prefs::tr(question).to_string();
-    std::thread::spawn(move || unsafe {
-        use windows::core::HSTRING;
-        let r = MessageBoxW(None, &HSTRING::from(text), w!("ABRA"), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND);
-        if r == IDYES {
-            launch::run(file, params);
-        }
-    });
+fn confirm_power(comp: &Compositor, bounds: RECT, dpi: f32, question: &'static str, file: &'static str, params: &'static str) {
+    crate::confirm::show(comp, bounds, dpi, question, file, params);
 }
 
 fn xy(lp: LPARAM) -> (f32, f32) {

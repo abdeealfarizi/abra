@@ -2,7 +2,6 @@ use crate::popup::Popup;
 use nacre_platform::text::{render, Style};
 use nacre_platform::wins::thumbnail;
 use nacre_ui::gfx::Gfx;
-use nacre_ui::glass::GlassParams;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use windows::core::w;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor};
@@ -114,8 +113,11 @@ impl Preview {
         let style = Style { px: (12.0 * d).round() as i32, weight: 500 };
         for (i, (hwnd, title, minimized)) in windows.iter().take(n).enumerate() {
             let x0 = pad + i as i32 * (tw + pad);
-            let mut thumb = if *minimized { None } else { thumbnail::register(self.popup.hwnd.0 as isize, *hwnd) };
-            if *minimized {
+            // DWM keeps an iconic thumbnail for minimized windows. Use it when
+            // available so the dock preview still represents the app window;
+            // only fall back to the app icon when the thumbnail is unavailable.
+            let mut thumb = thumbnail::register(self.popup.hwnd.0 as isize, *hwnd);
+            if *minimized && thumb.is_none() {
                 if let Some(s) = icon {
                     let sz = (64.0 * d) as i32;
                     let brush = comp.CreateSurfaceBrushWithSurface(s)?;

@@ -19,7 +19,7 @@ use windows::UI::Color;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionObject, CompositionStretch, Compositor, ContainerVisual, InsetClip};
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
 use windows_core::{Interface, HSTRING};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -63,6 +63,12 @@ enum Filter {
     Actions,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum AppsTab {
+    Favorites,
+    All,
+}
+
 #[derive(Clone, PartialEq)]
 enum RKind {
     App,
@@ -85,7 +91,9 @@ struct Row {
 enum HitKind {
     Mode(Mode),
     Filter(Filter),
+    AppsTab(AppsTab),
     Cat(Option<Cat>),
+    Favorite(usize),
     Row(usize),
     Cell(usize),
     ShowMore(usize),
@@ -114,6 +122,8 @@ struct Spot {
     scroll: usize,
     apps: Vec<App>,
     names: Vec<String>,
+    apps_tab: AppsTab,
+    favorite_paths: Vec<String>,
     cat: Option<Cat>,
     filter: Option<Filter>,
     files: Vec<Hit>,
@@ -243,6 +253,32 @@ fn quick_file() -> std::path::PathBuf {
     paths::config_dir().join("actions.txt")
 }
 
+fn favorites_file() -> std::path::PathBuf {
+    paths::config_dir().join("app_favorites.txt")
+}
+
+fn app_key(path: &str) -> String {
+    path.replace('/', "\\").trim().to_lowercase()
+}
+
+fn load_favorites() -> Vec<String> {
+    let text = std::fs::read_to_string(favorites_file()).unwrap_or_default();
+    let mut favorites = Vec::new();
+    for key in text.lines().map(app_key).filter(|key| !key.is_empty()) {
+        if !favorites.contains(&key) {
+            favorites.push(key);
+        }
+    }
+    favorites
+}
+
+fn save_favorites(favorites: &[String]) {
+    let text = if favorites.is_empty() { String::new() } else { format!("{}\n", favorites.join("\n")) };
+    if let Err(e) = std::fs::write(favorites_file(), text) {
+        log::line("spotlight", &format!("gagal menyimpan favorit aplikasi: {e}"));
+    }
+}
+
 fn action_title(a: &model::ActionDef) -> String {
     prefs::tr(a.title).to_string()
 }
@@ -309,6 +345,16 @@ pub fn toggle_at(bounds: RECT) {
 
 pub fn toggle_mode(mode: Mode) {
     toggle_mode_at(mode, default_bounds());
+}
+
+pub fn toggle_mode_at_cursor(mode: Mode) {
+    let mut point = POINT::default();
+    let bounds = unsafe { GetCursorPos(&mut point).ok() }.and_then(|_| {
+        crate::display::monitors().into_iter().find(|m| {
+            point.x >= m.rect.left && point.x < m.rect.right && point.y >= m.rect.top && point.y < m.rect.bottom
+        }).map(|m| m.rect)
+    }).unwrap_or_else(default_bounds);
+    toggle_mode_at(mode, bounds);
 }
 
 fn default_bounds() -> RECT {
@@ -428,6 +474,8 @@ fn create(comp: &Compositor, mode: Mode, bounds: RECT) -> windows_core::Result<B
         scroll: 0,
         apps,
         names,
+        apps_tab: AppsTab::Favorites,
+        favorite_paths: load_favorites(),
         cat: None,
         filter: None,
         files: vec![],
@@ -472,6 +520,21 @@ fn create(comp: &Compositor, mode: Mode, bounds: RECT) -> windows_core::Result<B
 impl Spot {
     fn look(&self) -> nacre_core::settings::Look {
         prefs::look(prefs::Role::Dock)
+    }
+
+    fn toggle_favorite(&mut self, app_index: usize) {
+        let Some(key) = self.apps.get(app_index).map(|app| app_key(&app.path)) else { return };
+        if let Some(pos) = self.favorite_paths.iter().position(|p| *p == key) {
+            self.favorite_paths.remove(pos);
+        } else {
+            self.favorite_paths.push(key);
+        }
+        save_favorites(&self.favorite_paths);
+        if self.mode == Mode::Apps && self.apps_tab == AppsTab::Favorites {
+            self.pscroll = 0.0;
+            self.rebuild_rows();
+        }
+        self.render_soft();
     }
 
     fn idle_rect(&self) -> Rect {
@@ -717,6 +780,22 @@ impl Spot {
                     });
                 }
                 self.rows.truncate(9);
+            }
+            Mode::Apps if self.apps_tab == AppsTab::Favorites => {
+                let candidates: Vec<usize> = if q.is_empty() {
+                    (0..self.apps.len()).collect()
+                } else {
+                    search::rank(&q, &self.names, self.apps.len())
+                };
+                let idxs: Vec<usize> = candidates.into_iter().filter(|&i| self.favorite_paths.contains(&app_key(&self.apps[i].path))).collect();
+                for i in idxs {
+                    let a = &self.apps[i];
+                    self.rows.push(Row { kind: RKind::App, title: a.name.clone(), sub: String::new(), path: a.path.clone() });
+                }
+                if !self.rows.is_empty() {
+                    self.sections = vec![(prefs::tr("Favoritos").to_string(), 0..self.rows.len())];
+                    self.expanded = vec![true];
+                }
             }
             Mode::Apps if q.is_empty() => {
                 let push = |rows: &mut Vec<Row>, sections: &mut Vec<(String, std::ops::Range<usize>)>, title: String, idxs: Vec<usize>, apps: &[App]| {
@@ -983,6 +1062,13 @@ impl Spot {
         self.render_with(false);
     }
 
+    fn render_soft(&mut self) {
+        self.render();
+        let content = self.popup.content.clone();
+        let _ = content.SetOpacity(0.86);
+        let _ = motion::scalar(&self.comp, &content, "Opacity", 0.86, 1.0, 140);
+    }
+
     fn render_with(&mut self, intro: bool) {
         if self.morphing {
             return;
@@ -1131,7 +1217,7 @@ impl Spot {
         }
         let mut top = g.h + 2.0 * d;
 
-        if matches!(self.mode, Mode::Search | Mode::Files) {
+        if matches!(self.mode, Mode::Search | Mode::Files | Mode::Apps) {
             let chips_h = 42.0 * d;
             let mut x = 20.0 * d;
             let cy2 = top + chips_h / 2.0;
@@ -1140,6 +1226,11 @@ impl Spot {
                 [(prefs::tr("Aplikasi"), Filter::Apps), (prefs::tr("Berkas Saya"), Filter::Files), (prefs::tr("Aksi"), Filter::Actions)]
                     .into_iter()
                     .map(|(l, f)| (l.to_string(), HitKind::Filter(f), self.filter == Some(f)))
+                    .collect()
+            } else if self.mode == Mode::Apps {
+                [(prefs::tr("Favoritos"), AppsTab::Favorites), (prefs::tr("Todas las aplicaciones"), AppsTab::All)]
+                    .into_iter()
+                    .map(|(l, tab)| (l.to_string(), HitKind::AppsTab(tab), self.apps_tab == tab))
                     .collect()
             } else {
                 FTYPES.iter().enumerate().map(|(i, (l, _))| (prefs::tr(l).to_string(), HitKind::FType(i), self.ftype == Some(i))).collect()
@@ -1202,7 +1293,7 @@ impl Spot {
         self.view = (top, ph);
         self.cell_y.clear();
         if self.rows.is_empty() {
-            let msg = if thumbs { prefs::tr("Belum ada berkas terbaru.") } else { prefs::tr("Tidak ada aplikasi") };
+            let msg = if thumbs { prefs::tr("Belum ada berkas terbaru.") } else if self.mode == Mode::Apps && self.apps_tab == AppsTab::Favorites { prefs::tr("Belum ada favorit. Pilih aplikasi dari tab Aplikasi.") } else { prefs::tr("Tidak ada aplikasi") };
             self.text(area, msg, 24.0 * d, top + 40.0 * d, (15.0 * d).round() as i32, 400, fg, 0.6, w - 40.0 * d);
             self.content_h = 0.0;
             return;
@@ -1246,6 +1337,11 @@ impl Spot {
                 if idx == self.sel {
                     self.rect(area, (cx - cw / 2.0 + 4.0 * d, y0, cw - 8.0 * d, ch - 4.0 * d), 14.0 * d, Color { A: 26, R: fg[0], G: fg[1], B: fg[2] });
                 }
+                let app_index = if !thumbs { self.apps.iter().position(|a| app_key(&a.path) == app_key(&row.path)) } else { None };
+                let is_favorite = app_index.is_some_and(|i| self.favorite_paths.contains(&app_key(&self.apps[i].path)));
+                if is_favorite {
+                    self.rect(area, (cx - cw / 2.0 + 4.0 * d, y0, cw - 8.0 * d, ch - 4.0 * d), 14.0 * d, crate::prefs::accent_c(58));
+                }
                 let iy = y0 + 6.0 * d;
                 if thumbs {
                     if let Some((s, tw, th)) = self.thumb_for(&row.path, icon) {
@@ -1261,6 +1357,12 @@ impl Spot {
                 let lpx = (12.0 * d).round() as i32;
                 let lw = self.text_w(&row.title, lpx, 400).min(cw - 10.0 * d);
                 self.text(area, &row.title, cx - lw / 2.0, iy + icon + 13.0 * d, lpx, 400, fg, 0.92, cw - 10.0 * d);
+                if let Some(app_index) = app_index {
+                    let sr: Rect = (cx + cw / 2.0 - 31.0 * d, y0 + 5.0 * d, 25.0 * d, 25.0 * d);
+                    self.rect(area, sr, 12.0 * d, if is_favorite { crate::prefs::accent_c(100) } else { Color { A: 48, R: fg[0], G: fg[1], B: fg[2] } });
+                    self.glyph(area, if is_favorite { "\u{E735}" } else { "\u{E734}" }, sr.0 + sr.2 / 2.0, sr.1 + sr.3 / 2.0, 13.0 * d, fg, if is_favorite { 1.0 } else { 0.75 });
+                    self.hits.push((sr, HitKind::Favorite(app_index)));
+                }
                 self.hits.push(((cx - cw / 2.0, y0, cw, ch), HitKind::Cell(idx)));
             }
             y += shown.div_ceil(COLS) as f32 * ch + 6.0 * d;
@@ -1306,6 +1408,11 @@ impl Spot {
             if idx == self.sel {
                 self.rect(content, (cx - cw / 2.0 + 4.0 * d, cy0, cw - 8.0 * d, ch - 4.0 * d), 14.0 * d, Color { A: 26, R: fg[0], G: fg[1], B: fg[2] });
             }
+            let app_index = self.apps.iter().position(|a| app_key(&a.path) == app_key(&row.path));
+            let is_favorite = app_index.is_some_and(|i| self.favorite_paths.contains(&app_key(&self.apps[i].path)));
+            if is_favorite {
+                self.rect(content, (cx - cw / 2.0 + 4.0 * d, cy0, cw - 8.0 * d, ch - 4.0 * d), 14.0 * d, crate::prefs::accent_c(58));
+            }
             if let Some(s) = self.icon_surface(&row.path, (icon * 1.6) as i32) {
                 self.sprite(content, &s, cx - icon / 2.0, cy0 + 8.0 * d, icon, icon, 1.0);
             } else {
@@ -1313,6 +1420,12 @@ impl Spot {
             }
             let lw = self.text_w(&row.title, (13.0 * d).round() as i32, 400).min(cw - 10.0 * d);
             self.text(content, &row.title, cx - lw / 2.0, cy0 + 8.0 * d + icon + 14.0 * d, (13.0 * d).round() as i32, 400, fg, 0.95, cw - 10.0 * d);
+            if let Some(app_index) = app_index {
+                let sr: Rect = (cx + cw / 2.0 - 31.0 * d, cy0 + 5.0 * d, 25.0 * d, 25.0 * d);
+                self.rect(content, sr, 12.0 * d, if is_favorite { crate::prefs::accent_c(100) } else { Color { A: 48, R: fg[0], G: fg[1], B: fg[2] } });
+                self.glyph(content, if is_favorite { "\u{E735}" } else { "\u{E734}" }, sr.0 + sr.2 / 2.0, sr.1 + sr.3 / 2.0, 13.0 * d, fg, if is_favorite { 1.0 } else { 0.75 });
+                self.hits.push((sr, HitKind::Favorite(app_index)));
+            }
             self.hits.push(((cx - cw / 2.0, cy0, cw, ch), HitKind::Cell(idx)));
         }
     }
@@ -1805,10 +1918,31 @@ unsafe extern "system" fn spot_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                         s.render();
                         Run::Nothing
                     }
+                    HitKind::AppsTab(tab) => {
+                        s.apps_tab = tab;
+                        s.pscroll = 0.0;
+                        s.scroll = 0;
+                        s.rebuild_rows();
+                        s.render_soft();
+                        Run::Nothing
+                    }
+                    HitKind::Favorite(i) => {
+                        s.toggle_favorite(i);
+                        Run::Nothing
+                    }
                     HitKind::Cat(c) => {
                         s.cat = c;
                         s.rebuild_rows();
                         s.render();
+                        Run::Nothing
+                    }
+                    HitKind::Cell(i) if s.mode == Mode::Apps && s.apps_tab == AppsTab::All => {
+                        s.sel = i;
+                        if let Some(path) = s.rows.get(i).map(|row| row.path.clone()) {
+                            if let Some(app_index) = s.apps.iter().position(|app| app_key(&app.path) == app_key(&path)) {
+                                s.toggle_favorite(app_index);
+                            }
+                        }
                         Run::Nothing
                     }
                     HitKind::Row(i) | HitKind::Cell(i) => {

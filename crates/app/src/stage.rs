@@ -72,6 +72,10 @@ struct St {
     live: HashMap<String, Capture>,
     active: bool,
     model: Stage,
+    models: HashMap<String, Stage>,
+    active_scene: String,
+    monitor_rect: RECT,
+    side_right: bool,
     parked: Vec<(Parked, String)>,
     shots: HashMap<String, Bitmap>,
     icons: HashMap<String, Option<Bitmap>>,
@@ -131,6 +135,11 @@ fn hook(ev: u32, hwnd: isize) {
 
 pub fn init(comp: &Compositor) -> windows_core::Result<()> {
     let n = park::restore_file(&parked_file());
+    let initial_monitor = crate::display::monitors()
+        .into_iter()
+        .find(|m| m.primary)
+        .map(|m| m.rect)
+        .unwrap_or_default();
     if n > 0 {
         log::line("stage", &format!("{n} jendela terparkir dari sesi lalu dikembalikan"));
     }
@@ -148,6 +157,10 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
                 live: HashMap::new(),
                 active: false,
                 model: Stage::default(),
+                models: HashMap::new(),
+                active_scene: String::new(),
+                monitor_rect: initial_monitor,
+                side_right: side_right_for(initial_monitor),
                 parked: Vec::new(),
                 shots: HashMap::new(),
                 icons: HashMap::new(),
@@ -175,11 +188,15 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
 
 fn noop() {}
 
-fn running_apps(wins: &[nacre_core::dock::items::Win], refused: &[String]) -> Vec<String> {
+fn running_apps(wins: &[nacre_core::dock::items::Win], refused: &[String], monitor: RECT) -> Vec<String> {
     let mut running: Vec<String> = Vec::new();
     for w in wins {
-        let k = key_of(&w.path);
-        if !k.is_empty() && !running.contains(&k) && !excluded(&k) && !refused.contains(&k) {
+        if !crate::display::window_is_on(w.hwnd, monitor) {
+            continue;
+        }
+        let path = key_of(&w.path);
+        let k = scene_key(&path, monitor);
+        if !path.is_empty() && !running.contains(&k) && !excluded(&path) && !refused.contains(&path) {
             running.push(k);
         }
     }
@@ -233,12 +250,28 @@ pub fn is_active() -> bool {
 }
 
 pub fn shot_for(app: &str) -> Option<Bitmap> {
-    with(|s| s.shots.get(&key_of(app)).cloned()).flatten()
+    with(|s| {
+        s.shots.get(&scene_key(&key_of(app), s.monitor_rect)).cloned().or_else(|| {
+            let prefix = format!("{}\u{1f}", key_of(app));
+            s.shots.iter().find(|(key, _)| key.starts_with(&prefix)).map(|(_, bmp)| bmp.clone())
+        })
+    }).flatten()
 }
 
 pub fn bring_app(path: &str) {
     log::line("stage", &format!("bring {path}"));
-    with(|s| s.focus_app(&key_of(path), 0));
+    with(|s| {
+        let path = key_of(path);
+        let target = enumerate::list(std::process::id()).into_iter()
+            .find(|w| key_of(&w.path) == path)
+            .and_then(|w| crate::display::monitor_bounds_for_window(w.hwnd))
+            .or_else(|| s.parked.iter().find(|(_, app)| app_path(app) == path).and_then(|(_, app)| scene_monitor(app)));
+        if let Some(rect) = target {
+            select_monitor(s, rect);
+        }
+        let app = scene_key(&path, s.monitor_rect);
+        s.focus_app(&app, 0)
+    });
 }
 
 fn sync() {
@@ -254,6 +287,10 @@ fn sync() {
             if cfg != s.cfg {
                 s.cfg = cfg;
                 s.model.max = p.stage_count as usize;
+                s.side_right = side_right_for(s.monitor_rect);
+                for model in s.models.values_mut() {
+                    model.max = p.stage_count as usize;
+                }
                 s.edge = None;
                 s.destroy_strip();
                 s.rebuild();
@@ -266,6 +303,66 @@ fn sync() {
 
 fn key_of(path: &str) -> String {
     path.to_ascii_lowercase()
+}
+
+fn scene_key(path: &str, monitor: RECT) -> String {
+    format!("{}\u{1f}{}:{}:{}:{}", key_of(path), monitor.left, monitor.top, monitor.right, monitor.bottom)
+}
+
+fn app_path(scene: &str) -> &str {
+    scene.split('\u{1f}').next().unwrap_or(scene)
+}
+
+fn monitor_id(monitor: RECT) -> String {
+    format!("{}:{}:{}:{}", monitor.left, monitor.top, monitor.right, monitor.bottom)
+}
+
+fn scene_monitor(scene: &str) -> Option<RECT> {
+    let (_, coordinates) = scene.split_once('\u{1f}')?;
+    let mut values = coordinates.split(':').map(str::parse::<i32>);
+    Some(RECT {
+        left: values.next()?.ok()?,
+        top: values.next()?.ok()?,
+        right: values.next()?.ok()?,
+        bottom: values.next()?.ok()?,
+    })
+}
+
+fn side_right_for(monitor: RECT) -> bool {
+    let all = crate::display::monitors();
+    let primary = all.iter().find(|m| m.primary).map(|m| m.rect);
+    if let Some(primary) = primary {
+        if monitor.left >= primary.right {
+            return false;
+        }
+        if monitor.right <= primary.left {
+            return true;
+        }
+    }
+    prefs::get().stage_right
+}
+
+fn monitor_for_point(x: i32, y: i32) -> Option<RECT> {
+    crate::display::monitors().into_iter().find_map(|m| {
+        (x >= m.rect.left && x < m.rect.right && y >= m.rect.top && y < m.rect.bottom).then_some(m.rect)
+    })
+}
+
+fn select_monitor(s: &mut St, rect: RECT) {
+    let next = monitor_id(rect);
+    if next == s.active_scene {
+        return;
+    }
+    if !s.active_scene.is_empty() {
+        let previous = std::mem::replace(&mut s.model, Stage { max: prefs::get().stage_count as usize, ..Default::default() });
+        s.models.insert(s.active_scene.clone(), previous);
+    }
+    s.active_scene = next.clone();
+    s.monitor_rect = rect;
+    s.side_right = side_right_for(rect);
+    s.model = s.models.remove(&next).unwrap_or_else(|| Stage { max: prefs::get().stage_count as usize, ..Default::default() });
+    s.live.clear();
+    s.rebuild();
 }
 
 fn is_desktop(hwnd: isize) -> bool {
@@ -300,6 +397,7 @@ impl St {
         self.active = true;
         let p = prefs::get();
         self.model = Stage { max: p.stage_count as usize, ..Default::default() };
+        self.models.clear();
         self.cfg = (p.stage_right, p.stage_size, p.stage_gap, p.stage_count, p.stage_titles as u8);
         log::line("stage", "aktif");
         self.refresh();
@@ -335,6 +433,7 @@ impl St {
         self.destroy_strip();
         self.shots.clear();
         self.model = Stage::default();
+        self.models.clear();
         log::line("stage", "nonaktif");
     }
 
@@ -382,8 +481,18 @@ impl St {
                 return;
             }
         }
-        let wins = enumerate::list(std::process::id());
-        let running = running_apps(&wins, &self.refused);
+        let monitor = if is_desktop(fg) {
+            let mut point = windows::Win32::Foundation::POINT::default();
+            unsafe { let _ = GetCursorPos(&mut point); }
+            monitor_for_point(point.x, point.y).unwrap_or(self.monitor_rect)
+        } else {
+            crate::display::monitor_bounds_for_window(fg).unwrap_or(self.monitor_rect)
+        };
+        select_monitor(self, monitor);
+        let wins: Vec<_> = enumerate::list(std::process::id()).into_iter()
+            .filter(|w| crate::display::window_is_on(w.hwnd, self.monitor_rect))
+            .collect();
+        let running = running_apps(&wins, &self.refused, self.monitor_rect);
         self.model.prune(&running);
         let ch = if is_desktop(fg) {
             if !prefs::get().stage_desktop_click {
@@ -392,8 +501,9 @@ impl St {
             self.model.desktop()
         } else {
             let Some(w) = wins.iter().find(|w| w.hwnd == fg) else { return };
-            let app = key_of(&w.path);
-            if app.is_empty() || excluded(&app) || self.refused.contains(&app) {
+            let path = key_of(&w.path);
+            let app = scene_key(&path, self.monitor_rect);
+            if path.is_empty() || excluded(&path) || self.refused.contains(&path) {
                 return;
             }
             self.model.focus(&app, &running)
@@ -402,10 +512,13 @@ impl St {
     }
 
     fn focus_app(&mut self, app: &str, _from: isize) {
-        let wins = enumerate::list(std::process::id());
-        let running = running_apps(&wins, &self.refused);
-        let target = self.parked.iter().find(|(_, a)| a == app).map(|(p, _)| p.hwnd).or_else(|| wins.iter().find(|w| key_of(&w.path) == app).map(|w| w.hwnd)).unwrap_or(0);
-        let ch = self.model.focus(app, &running);
+        let app = if app.contains('\u{1f}') { app.to_string() } else { scene_key(app, self.monitor_rect) };
+        let wins: Vec<_> = enumerate::list(std::process::id()).into_iter()
+            .filter(|w| crate::display::window_is_on(w.hwnd, self.monitor_rect))
+            .collect();
+        let running = running_apps(&wins, &self.refused, self.monitor_rect);
+        let target = self.parked.iter().find(|(_, a)| a == &app).map(|(p, _)| p.hwnd).or_else(|| wins.iter().find(|w| scene_key(&key_of(&w.path), self.monitor_rect) == app).map(|w| w.hwnd)).unwrap_or(0);
+        let ch = self.model.focus(&app, &running);
         self.apply(ch, &wins, target);
     }
 
@@ -457,11 +570,12 @@ impl St {
             }
         }
         for app in &ch.park {
-            if excluded(app) {
+            let path = app_path(app);
+            if excluded(path) {
                 continue;
             }
             if media_on {
-                let stem = std::path::Path::new(app).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+                let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
                 if !stem.is_empty() {
                     let key = app.clone();
                     nacre_platform::media::pause_app(stem, move |ids| {
@@ -473,7 +587,7 @@ impl St {
                     });
                 }
             }
-            for w in wins.iter().filter(|w| key_of(&w.path) == *app) {
+            for w in wins.iter().filter(|w| scene_key(&key_of(&w.path), self.monitor_rect) == *app) {
                 if focus::is_minimized(w.hwnd) || park::is_parked(w.hwnd) || self.parked.iter().any(|(p, _)| p.hwnd == w.hwnd) {
                     continue;
                 }
@@ -492,9 +606,9 @@ impl St {
                         self.parked.push((p, app.clone()));
                     } else {
                         park::unpark(&p);
-                        if !self.refused.contains(app) {
-                            log::line("stage", &format!("{app} menolak diparkir; tidak dikelola"));
-                            self.refused.push(app.clone());
+                        if !self.refused.iter().any(|r| r == path) {
+                            log::line("stage", &format!("{path} menolak diparkir; tidak dikelola"));
+                            self.refused.push(path.to_string());
                             refused_now = true;
                         }
                     }
@@ -502,7 +616,7 @@ impl St {
             }
         }
         if refused_now {
-            let running = running_apps(&wins, &self.refused);
+            let running = running_apps(&wins, &self.refused, self.monitor_rect);
             self.model.prune(&running);
         }
         self.save();
@@ -546,17 +660,18 @@ impl St {
         for (p, a) in self.parked.drain(..) {
             if apps.contains(&a) {
                 let mut q = p;
-                let sw = nacre_platform::sys::screen_size().0;
-                let right = self.strip.as_ref().map(|s| s.right).unwrap_or(false);
+                let left = self.monitor_rect.left;
+                let right_edge = self.monitor_rect.right;
+                let right = self.side_right;
                 let edge = self.strip.as_ref().map(|s| (s.w + 8.0 * s.dpi) as i32).unwrap_or(0);
-                if !q.maximized && right && q.rect.2 > sw - edge {
-                    let dx = (q.rect.2 - (sw - edge)).min(q.rect.0.max(0));
+                if !q.maximized && right && q.rect.2 > right_edge - edge {
+                    let dx = (q.rect.2 - (right_edge - edge)).min((q.rect.0 - left).max(0));
                     q.rect = (q.rect.0 - dx, q.rect.1, q.rect.2 - dx, q.rect.3);
-                } else if !q.maximized && !right && q.rect.0 < edge {
-                    let dx = edge - q.rect.0;
+                } else if !q.maximized && !right && q.rect.0 < left + edge {
+                    let dx = left + edge - q.rect.0;
                     q.rect = (q.rect.0 + dx, q.rect.1, q.rect.2 + dx, q.rect.3);
-                    if q.rect.2 > sw {
-                        q.rect.2 = sw;
+                    if q.rect.2 > right_edge {
+                        q.rect.2 = right_edge;
                     }
                 }
                 park::unpark(&q);
@@ -574,11 +689,13 @@ impl St {
             self.gfx = Gfx::shared(&comp).ok();
         }
         let Some(gfx) = self.gfx.as_ref() else { return };
-        let (sw, sh) = nacre_platform::sys::screen_size();
+        let tilt_sign = if self.side_right { -1.0f32 } else { 1.0 };
+        let bounds = crate::display::virtual_bounds().unwrap_or(RECT { left: 0, top: 0, right: 0, bottom: 0 });
+        let (sw, sh) = (bounds.right - bounds.left, bounds.bottom - bounds.top);
         let go = || -> windows_core::Result<Popup> {
             let base = nacre_ui::glass::GlassParams::dark((10.0, 10.0), 0.0);
             let mut popup = Popup::new(&comp, w!("AbraStageFly"), Some(fly_proc), WS_EX_TRANSPARENT, base)?;
-            popup.set_rect(0, 0, sw, sh)?;
+            popup.set_rect(bounds.left, bounds.top, sw, sh)?;
             popup.panel.set_rect(0.0, 0.0, 0.0, 0.0)?;
             popup.content.SetTransformMatrix(perspective(sw as f32 / 2.0, sh as f32 / 2.0, 1400.0))?;
             for (bmp, from, to) in &items {
@@ -598,12 +715,11 @@ impl St {
                 v.SetCenterPoint(Vector3 { X: cx, Y: cy, Z: 0.0 })?;
                 let (sx, sy) = (from.2 / to.2.max(1.0), from.3 / to.3.max(1.0));
                 popup.content.Children()?.InsertAtTop(&v)?;
-                let off0 = Vector3 { X: from.0 - cx * (1.0 - sx), Y: from.1 - cy * (1.0 - sy), Z: 0.0 };
-                motion::vec3(&comp, &v, "Offset", off0, Vector3 { X: to.0, Y: to.1, Z: 0.0 }, motion::stage_ms(motion::STAGE_SWAP_MS))?;
-                let sign = if prefs::get().stage_right { -1.0f32 } else { 1.0 };
+                let off0 = Vector3 { X: from.0 - bounds.left as f32 - cx * (1.0 - sx), Y: from.1 - bounds.top as f32 - cy * (1.0 - sy), Z: 0.0 };
+                motion::vec3(&comp, &v, "Offset", off0, Vector3 { X: to.0 - bounds.left as f32, Y: to.1 - bounds.top as f32, Z: 0.0 }, motion::stage_ms(motion::STAGE_SWAP_MS))?;
                 let shrinking = from.2 > to.2;
                 v.SetRotationAxis(Vector3 { X: 0.0, Y: 1.0, Z: 0.0 })?;
-                let (a0, a1) = if shrinking { (0.0, sign * TILT) } else { (sign * TILT, 0.0) };
+                let (a0, a1) = if shrinking { (0.0, tilt_sign * TILT) } else { (tilt_sign * TILT, 0.0) };
                 motion::scalar(&comp, &v, "RotationAngleInDegrees", a0, a1, motion::stage_ms(motion::STAGE_SWAP_MS))?;
                 motion::vec3(&comp, &v, "Scale", Vector3 { X: sx, Y: sy, Z: 1.0 }, Vector3 { X: 1.0, Y: 1.0, Z: 1.0 }, motion::stage_ms(motion::STAGE_SWAP_MS))?;
             }
@@ -669,7 +785,7 @@ impl St {
 
     fn icon(&mut self, app: &str, px: i32) -> Option<Bitmap> {
         if !self.icons.contains_key(app) {
-            let b = icons::load(app, px);
+            let b = icons::load(app_path(app), px);
             self.icons.insert(app.to_string(), b);
         }
         self.icons.get(app).cloned().flatten()
@@ -713,7 +829,8 @@ impl St {
             }
         }
         let comp = self.comp.clone();
-        let (sw, sh) = nacre_platform::sys::screen_size();
+        let monitor = self.monitor_rect;
+        let (sw, sh) = (monitor.right - monitor.left, monitor.bottom - monitor.top);
         let mut ars: HashMap<String, f32> = self.shots.iter().map(|(k, b)| (k.clone(), b.w as f32 / b.h.max(1) as f32)).collect();
         for (k, c) in &self.live {
             if c.has_frame {
@@ -731,7 +848,7 @@ impl St {
         let slide_ms = motion::stage_ms(motion::STRIP_SLIDE_MS);
 
         let cfg = prefs::get();
-        let right = cfg.stage_right;
+        let right = self.side_right;
         let sign = if right { -1.0f32 } else { 1.0 };
         let (tw, th_max, gap) = (cfg.stage_size as f32 * dpi, cfg.stage_size as f32 * 0.72 * dpi, cfg.stage_gap as f32 * dpi);
         strip.w = tw + 56.0 * dpi;
@@ -746,9 +863,9 @@ impl St {
             total = avail;
         }
         let (slot_h, gap, tw, th_max) = (slot_h * scale, gap * scale, tw * scale, th_max * scale);
-        let y0 = ((sh as f32 - total) / 2.0).max(40.0 * dpi);
+        let y0 = monitor.top as f32 + ((sh as f32 - total) / 2.0).max(40.0 * dpi);
         let pad = 26.0 * dpi;
-        let px = if right { sw - strip.w as i32 } else { 0 };
+        let px = if right { monitor.left + sw - strip.w as i32 } else { monitor.left };
         let _ = strip.popup.set_rect(px, y0 as i32, strip.w as i32, total.ceil() as i32);
         let card_x = if right { strip.w - pad - tw } else { pad };
         let show_titles = cfg.stage_titles;
@@ -864,7 +981,7 @@ impl St {
         }
         if let Some(e) = &self.edge {
             let ew = (2.0 * dpi) as i32;
-            e.place(if right { sw - ew } else { 0 }, 0, ew, sh);
+            e.place(if right { monitor.left + sw - ew } else { monitor.left }, monitor.top, ew, sh);
             e.set_visible(true);
         }
         let was_shown = strip.shown;
@@ -946,9 +1063,9 @@ impl St {
             }
         }
         let overlap = if strip.right {
-            (r.right as f32) > nacre_platform::sys::screen_size().0 as f32 - strip.w + 6.0 * strip.dpi
+            (r.right as f32) > self.monitor_rect.right as f32 - strip.w + 6.0 * strip.dpi
         } else {
-            (r.left as f32) < strip.w - 6.0 * strip.dpi
+            (r.left as f32) < self.monitor_rect.left as f32 + strip.w - 6.0 * strip.dpi
         };
         let want_shown = !overlap || self.peek;
         self.set_strip_shown(want_shown);
@@ -1048,7 +1165,7 @@ impl St {
 
 fn title_surface(gfx: &Gfx, app: &str, px: i32, maxw: i32) -> Option<(windows::UI::Composition::CompositionDrawingSurface, i32, i32)> {
     use nacre_platform::text::{measure, render, Style};
-    let stem = std::path::Path::new(app).file_stem()?.to_string_lossy().to_string();
+    let stem = std::path::Path::new(app_path(app)).file_stem()?.to_string_lossy().to_string();
     let mut chars = stem.chars();
     let name: String = chars.next()?.to_uppercase().chain(chars).collect();
     let style = Style { px, weight: 600 };
@@ -1208,7 +1325,9 @@ unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let apps = sl.apps.clone();
                 if shift {
                     let ch = s.model.add_to_stage(&apps[0]);
-                    let wins = enumerate::list(std::process::id());
+                    let wins: Vec<_> = enumerate::list(std::process::id()).into_iter()
+                        .filter(|w| crate::display::window_is_on(w.hwnd, s.monitor_rect))
+                        .collect();
                     s.apply(ch, &wins, 0);
                 } else {
                     s.focus_app(&apps[0], 0);
