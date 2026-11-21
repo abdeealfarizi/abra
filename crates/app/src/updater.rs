@@ -86,8 +86,7 @@ fn check(manual: bool) {
         let seen = std::fs::read_to_string(seen_file()).unwrap_or_default();
         if seen.trim() != r.version {
             let _ = std::fs::write(seen_file(), &r.version);
-            let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
-            let title = if en { "Update available" } else { "Pembaruan tersedia" };
+            let title = crate::prefs::tr("Pembaruan tersedia");
             crate::notch::push_pill(nacre_core::notch::pills::Kind::Update, "update", title, &format!("ABRA {}", r.version), Some(nacre_core::notch::pills::UPDATE_MS));
         }
     }

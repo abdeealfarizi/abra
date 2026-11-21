@@ -126,7 +126,7 @@ pub fn glass(size: (f32, f32), radius: f32, role: Role) -> GlassParams {
 
 pub fn tr(src: &'static str) -> &'static str {
     let lang = get().lang;
-    if lang == nacre_core::i18n::Lang::En && !nacre_core::i18n::is_known(src) {
+    if lang != nacre_core::i18n::Lang::Id && !nacre_core::i18n::is_known(src) {
         note_missing(src);
     }
     nacre_core::i18n::tr(lang, src)

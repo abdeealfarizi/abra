@@ -141,28 +141,29 @@ fn hit(r: Rect, x: f32, y: f32) -> bool {
     x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3
 }
 
-fn en() -> bool {
-    prefs::get().lang == nacre_core::i18n::Lang::En
+fn lang() -> nacre_core::i18n::Lang {
+    prefs::get().lang
 }
 
 fn month_label(m: u32) -> String {
-    const EN: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    if en() {
-        EN[((m + 11) % 12) as usize].to_string()
-    } else {
-        calendar::month_name(m).to_string()
-    }
+    nacre_core::i18n::month_name(lang(), m, calendar::month_name(m)).to_string()
 }
 
 fn weekday_label(wd: u32) -> String {
     const ID: [&str; 7] = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
     const EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    if en() { EN[(wd % 7) as usize] } else { ID[(wd % 7) as usize] }.to_string()
+    const ES: [&str; 7] = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+    match lang() {
+        nacre_core::i18n::Lang::Id => ID[(wd % 7) as usize],
+        nacre_core::i18n::Lang::En => EN[(wd % 7) as usize],
+        nacre_core::i18n::Lang::Es => ES[(wd % 7) as usize],
+    }.to_string()
 }
 
 fn hhmm(h: u32, m: u32) -> String {
     if prefs::get().clock_24h {
-        format!("{h:02}.{m:02}")
+        let sep = if lang() == nacre_core::i18n::Lang::Id { '.' } else { ':' };
+        format!("{h:02}{sep}{m:02}")
     } else {
         format!("{}:{m:02}", if h % 12 == 0 { 12 } else { h % 12 })
     }
@@ -584,9 +585,11 @@ impl Mgr {
                 self.text(p, &format!("{} {}", month_label(n.month), n.year), 12.5 * d, 500, fg, 16.0 * d, h - 32.0 * d, 0, 0.6);
             }
             Kind::Month => {
-                let g = calendar::grid(n.year, n.month, !en());
+                let current_lang = lang();
+                let monday_first = current_lang != nacre_core::i18n::Lang::Id;
+                let g = calendar::grid(n.year, n.month, monday_first);
                 self.text(p, &month_label(n.month).to_uppercase(), 11.0 * d, 700, RED, 14.0 * d, 11.0 * d, 0, 1.0);
-                let labels = calendar::weekday_labels(!en());
+                let labels = calendar::weekday_labels(current_lang, monday_first);
                 let (gx, gy) = (10.0 * d, 30.0 * d);
                 let cw = (w - 2.0 * gx) / 7.0;
                 let rows = g.rows.max(5) as f32;

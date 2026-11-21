@@ -251,6 +251,9 @@ pub fn greeting(hour: u32, lang: Lang) -> &'static str {
         (Daypart::Morning, Lang::En) => "Good morning",
         (Daypart::Noon | Daypart::Afternoon, Lang::En) => "Good afternoon",
         (Daypart::Night, Lang::En) => "Good evening",
+        (Daypart::Morning, Lang::Es) => "Buenos días",
+        (Daypart::Noon | Daypart::Afternoon, Lang::Es) => "Buenas tardes",
+        (Daypart::Night, Lang::Es) => "Buenas noches",
     }
 }
 
@@ -277,7 +280,7 @@ pub fn clock(hour: u32, minute: u32, h24: bool, lang: Lang) -> String {
             0 => 12,
             h => h,
         };
-        format!("{h}:{minute:02} {}", if hour < 12 { "AM" } else { "PM" })
+        format!("{h}:{minute:02} {}", crate::i18n::day_period(lang, hour))
     }
 }
 

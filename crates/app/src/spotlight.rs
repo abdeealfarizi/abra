@@ -799,12 +799,12 @@ impl Spot {
                 }
             }
             Mode::Tasks => {
-                let en = crate::tasks::english();
+                let lang = crate::tasks::lang();
                 let now = crate::tasks::now();
                 if !q.is_empty() {
                     let (text, due) = nacre_core::todo::parse(&q, now);
                     let sub = match due {
-                        Some(d) => format!("{} \u{00B7} {}", prefs::tr("Pengingat"), nacre_core::todo::due_label(d, now, en)),
+                        Some(d) => format!("{} \u{00B7} {}", prefs::tr("Pengingat"), nacre_core::todo::due_label_lang(d, now, lang)),
                         None => prefs::tr("Tekan Enter untuk menambah").to_string(),
                     };
                     self.rows.push(Row { kind: RKind::TaskAdd, title: format!("{} \u{201C}{}\u{201D}", prefs::tr("Tambah"), text), sub, path: q.clone() });
@@ -817,7 +817,7 @@ impl Spot {
                     }
                     let mut sub = prefs::tr(if t.done { "Selesai" } else { "Belum selesai" }).to_string();
                     if let Some(d) = t.due {
-                        sub = format!("{sub} \u{00B7} {}", nacre_core::todo::due_label(d, now, en));
+                        sub = format!("{sub} \u{00B7} {}", nacre_core::todo::due_label_lang(d, now, lang));
                     }
                     self.rows.push(Row { kind: RKind::Task(t.id), title: t.text.clone(), sub, path: if t.done { "1".into() } else { String::new() } });
                 }
