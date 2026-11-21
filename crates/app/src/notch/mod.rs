@@ -543,12 +543,13 @@ impl Notch {
             timer(hwnd, T_TODO, 2500);
             with(hwnd, |d| {
                 d._bt = Some(nacre_platform::devices::watch_bluetooth(|name, on| {
-                    let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
-                    let sub = match (on, en) {
-                        (true, true) => "Connected",
-                        (false, true) => "Disconnected",
-                        (true, false) => "Tersambung",
-                        (false, false) => "Terputus",
+                    let sub = match (on, crate::prefs::get().lang) {
+                        (true, nacre_core::i18n::Lang::En) => "Connected",
+                        (false, nacre_core::i18n::Lang::En) => "Disconnected",
+                        (true, nacre_core::i18n::Lang::Es) => "Conectado",
+                        (false, nacre_core::i18n::Lang::Es) => "Desconectado",
+                        (true, nacre_core::i18n::Lang::Id) => "Tersambung",
+                        (false, nacre_core::i18n::Lang::Id) => "Terputus",
                     };
                     push_pill(PillKind::Device, &format!("bt:{name}"), &name, sub, Some(nacre_core::notch::pills::DEVICE_MS));
                 }));
@@ -613,9 +614,9 @@ impl Notch {
             return;
         }
         self.send = None;
-        let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+        let lang = crate::prefs::get().lang;
         let hw = self.hwnd.0 as isize;
-        match nacre_platform::sendsrv::start(&paths, en, move || post(hw, WM_SEND)) {
+        match nacre_platform::sendsrv::start(&paths, lang, move || post(hw, WM_SEND)) {
             Ok(server) => {
                 let px = (86.0 * self.dpi).floor();
                 let qr = nacre_core::qr::encode(&server.url).and_then(|m| {
@@ -864,7 +865,7 @@ impl Notch {
             glance::Item::Clock => glance::clock(now.hour, now.minute, s.clock_24h, lang),
             glance::Item::Date => {
                 let wd = calendar::weekday(now.year, now.month, now.day) as usize;
-                let days = nacre_core::i18n::weekday_labels(lang, false, calendar::weekday_labels(false));
+                let days = nacre_core::i18n::weekday_labels(lang, false, calendar::weekday_labels(nacre_core::i18n::Lang::Id, false));
                 let month: String = nacre_core::i18n::month_name(lang, now.month, calendar::month_name(now.month)).chars().take(3).collect();
                 format!("{}, {} {}", days[wd], now.day, month)
             }
@@ -1628,13 +1629,13 @@ impl Notch {
         });
         if !fired.is_empty() {
             crate::tasks::save();
-            let en = crate::tasks::english();
+            let lang = crate::tasks::lang();
             let now = self.now_ms();
             let s = crate::prefs::get();
-            let title = if en { "Reminder" } else { "Pengingat" };
+            let title = crate::prefs::tr("Pengingat");
             for t in &fired {
                 log::line("tugas", &format!("pengingat #{} jatuh tempo", t.id));
-                let label = t.due.map(|d| nacre_core::todo::due_label(d, crate::tasks::now(), en)).unwrap_or_default();
+                let label = t.due.map(|d| nacre_core::todo::due_label_lang(d, crate::tasks::now(), lang)).unwrap_or_default();
                 if s.pill_reminders {
                     self.pills.push(PillKind::Reminder, &format!("todo:{}", t.id), &t.text, &label, now, None);
                 }
@@ -1651,7 +1652,7 @@ impl Notch {
     }
 
     fn todo_rows() -> Vec<views::TodoRow> {
-        let en = crate::tasks::english();
+        let lang = crate::tasks::lang();
         let now = crate::tasks::now();
         let now_m = now.minutes();
         crate::tasks::with(|l| {
@@ -1662,7 +1663,7 @@ impl Notch {
                     id: t.id,
                     text: t.text.clone(),
                     done: t.done,
-                    due: t.due.map(|d| nacre_core::todo::due_label(d, now, en)).unwrap_or_default(),
+                    due: t.due.map(|d| nacre_core::todo::due_label_lang(d, now, lang)).unwrap_or_default(),
                     late: !t.done && t.due.is_some_and(|d| d <= now_m),
                 })
                 .collect()
@@ -2744,15 +2745,23 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
         WM_DEVICECHANGE_MSG => {
             let ev = wp.0 as u32;
             if ev == 0x8000 || ev == 0x8004 {
-                let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+                let lang = crate::prefs::get().lang;
                 for l in nacre_platform::devices::volume_letters(lp.0) {
                     let label = nacre_platform::devices::drive_label(l);
-                    let title = if label.is_empty() { if en { "USB drive".to_string() } else { "Flashdisk".to_string() } } else { label };
-                    let state = match (ev == 0x8000, en) {
-                        (true, true) => "connected",
-                        (false, true) => "removed",
-                        (true, false) => "tersambung",
-                        (false, false) => "dilepas",
+                    let title = if label.is_empty() {
+                        match lang {
+                            nacre_core::i18n::Lang::Id => "Flashdisk".to_string(),
+                            nacre_core::i18n::Lang::En => "USB drive".to_string(),
+                            nacre_core::i18n::Lang::Es => "Unidad USB".to_string(),
+                        }
+                    } else { label };
+                    let state = match (ev == 0x8000, lang) {
+                        (true, nacre_core::i18n::Lang::En) => "connected",
+                        (false, nacre_core::i18n::Lang::En) => "removed",
+                        (true, nacre_core::i18n::Lang::Es) => "conectado",
+                        (false, nacre_core::i18n::Lang::Es) => "retirado",
+                        (true, nacre_core::i18n::Lang::Id) => "tersambung",
+                        (false, nacre_core::i18n::Lang::Id) => "dilepas",
                     };
                     push_pill(PillKind::Device, &format!("drive:{l}:\\"), &title, &format!("({l}:) {state}"), Some(nacre_core::notch::pills::DEVICE_MS));
                 }

@@ -58,33 +58,38 @@ pub fn add_days(y: i32, m: u32, d: u32, delta: i32) -> (i32, u32, u32) {
     (y, m, d as u32)
 }
 
-pub fn month_short(m: u32, en: bool) -> &'static str {
+pub fn month_short(m: u32, lang: crate::i18n::Lang) -> &'static str {
     const ID: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
     const EN: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const ES: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
     let i = (m.clamp(1, 12) - 1) as usize;
-    if en {
-        EN[i]
-    } else {
-        ID[i]
+    match lang {
+        crate::i18n::Lang::Id => ID[i],
+        crate::i18n::Lang::En => EN[i],
+        crate::i18n::Lang::Es => ES[i],
     }
 }
 
-pub fn weekday_short(wd: u32, en: bool) -> &'static str {
+pub fn weekday_short(wd: u32, lang: crate::i18n::Lang) -> &'static str {
     const ID: [&str; 7] = ["MIN", "SEN", "SEL", "RAB", "KAM", "JUM", "SAB"];
     const EN: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    const ES: [&str; 7] = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
     let i = (wd % 7) as usize;
-    if en {
-        EN[i]
-    } else {
-        ID[i]
+    match lang {
+        crate::i18n::Lang::Id => ID[i],
+        crate::i18n::Lang::En => EN[i],
+        crate::i18n::Lang::Es => ES[i],
     }
 }
 
-pub fn weekday_labels(monday_first: bool) -> [&'static str; 7] {
-    if monday_first {
-        ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
-    } else {
-        ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"]
+pub fn weekday_labels(lang: crate::i18n::Lang, monday_first: bool) -> [&'static str; 7] {
+    match (lang, monday_first) {
+        (crate::i18n::Lang::Id, true) => ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"],
+        (crate::i18n::Lang::Id, false) => ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"],
+        (crate::i18n::Lang::En, true) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        (crate::i18n::Lang::En, false) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+        (crate::i18n::Lang::Es, true) => ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"],
+        (crate::i18n::Lang::Es, false) => ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"],
     }
 }
 
@@ -131,15 +136,17 @@ mod tests {
         assert_eq!(add_days(2026, 3, 1, -1), (2026, 2, 28));
         assert_eq!(add_days(2024, 3, 1, -1), (2024, 2, 29));
         assert_eq!(add_days(2026, 1, 2, -40), (2025, 11, 23));
-        assert_eq!(weekday_short(weekday(2026, 11, 13), false), "JUM");
-        assert_eq!(weekday_short(4, true), "THU");
-        assert_eq!((month_short(8, false), month_short(8, true)), ("Agu", "Aug"));
+        assert_eq!(weekday_short(weekday(2026, 11, 13), crate::i18n::Lang::Id), "JUM");
+        assert_eq!(weekday_short(4, crate::i18n::Lang::En), "THU");
+        assert_eq!((month_short(8, crate::i18n::Lang::Id), month_short(8, crate::i18n::Lang::En), month_short(8, crate::i18n::Lang::Es)), ("Agu", "Aug", "ago"));
+        assert_eq!(weekday_short(3, crate::i18n::Lang::Es), "MIÉ");
     }
 
     #[test]
     fn labels_follow_week_start() {
-        assert_eq!(weekday_labels(false)[0], "Min");
-        assert_eq!(weekday_labels(true)[0], "Sen");
+        assert_eq!(weekday_labels(crate::i18n::Lang::Id, false)[0], "Min");
+        assert_eq!(weekday_labels(crate::i18n::Lang::Id, true)[0], "Sen");
+        assert_eq!(weekday_labels(crate::i18n::Lang::Es, true)[0], "lun");
         assert_eq!(month_name(11), "November");
     }
 }

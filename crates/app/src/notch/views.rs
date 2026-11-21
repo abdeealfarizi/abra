@@ -270,17 +270,28 @@ fn tab_accent(t: Tab, d: &Data) -> [u8; 3] {
     }
 }
 
+fn localized(id: &'static str, en: &'static str, es: &'static str) -> &'static str {
+    match crate::prefs::get().lang {
+        nacre_core::i18n::Lang::Id => id,
+        nacre_core::i18n::Lang::En => en,
+        nacre_core::i18n::Lang::Es => es,
+    }
+}
+
 fn tab_title(t: Tab) -> (&'static str, &'static str) {
-    let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
-    match (t, en) {
-        (Tab::Play, false) => ("Sedang", "Diputar"),
-        (Tab::Play, true) => ("Now", "Playing"),
-        (Tab::Shelf, false) => ("Rak", "Berkas"),
-        (Tab::Shelf, true) => ("File", "Shelf"),
-        (Tab::Timer, false) => ("Sesi", "Fokus"),
-        (Tab::Timer, true) => ("Focus", "Session"),
-        (Tab::Todo, false) => ("Daftar", "Tugas"),
-        (Tab::Todo, true) => ("Task", "List"),
+    match (t, crate::prefs::get().lang) {
+        (Tab::Play, nacre_core::i18n::Lang::Id) => ("Sedang", "Diputar"),
+        (Tab::Play, nacre_core::i18n::Lang::En) => ("Now", "Playing"),
+        (Tab::Play, nacre_core::i18n::Lang::Es) => ("En", "reproducción"),
+        (Tab::Shelf, nacre_core::i18n::Lang::Id) => ("Rak", "Berkas"),
+        (Tab::Shelf, nacre_core::i18n::Lang::En) => ("File", "Shelf"),
+        (Tab::Shelf, nacre_core::i18n::Lang::Es) => ("Archivos", "guardados"),
+        (Tab::Timer, nacre_core::i18n::Lang::Id) => ("Sesi", "Fokus"),
+        (Tab::Timer, nacre_core::i18n::Lang::En) => ("Focus", "Session"),
+        (Tab::Timer, nacre_core::i18n::Lang::Es) => ("Sesión", "de enfoque"),
+        (Tab::Todo, nacre_core::i18n::Lang::Id) => ("Daftar", "Tugas"),
+        (Tab::Todo, nacre_core::i18n::Lang::En) => ("Task", "List"),
+        (Tab::Todo, nacre_core::i18n::Lang::Es) => ("Lista", "de tareas"),
     }
 }
 
@@ -293,15 +304,15 @@ fn clock_parts() -> (String, String) {
     let s = crate::prefs::get();
     let lang = s.lang;
     let wd = nacre_core::island::calendar::weekday(n.year, n.month, n.day) as usize;
-    let days = nacre_core::i18n::weekday_labels(lang, false, nacre_core::island::calendar::weekday_labels(false));
-    let months_en = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let months_id = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-    let mon = if lang == nacre_core::i18n::Lang::En { months_en } else { months_id }[(n.month as usize + 11) % 12];
+    let days = nacre_core::i18n::weekday_labels(lang, false, nacre_core::island::calendar::weekday_labels(nacre_core::i18n::Lang::Id, false));
+    let mon: String = nacre_core::i18n::month_name(lang, n.month, nacre_core::island::calendar::month_name(n.month))
+        .chars().take(3).collect();
     let date = format!("{} {} {}", days[wd % 7], n.day, mon);
     let time = if s.clock_24h {
-        format!("{:02}.{:02}", n.hour, n.minute)
+        let sep = if lang == nacre_core::i18n::Lang::Id { '.' } else { ':' };
+        format!("{:02}{sep}{:02}", n.hour, n.minute)
     } else {
-        format!("{}:{:02} {}", if n.hour % 12 == 0 { 12 } else { n.hour % 12 }, n.minute, if n.hour < 12 { "AM" } else { "PM" })
+        format!("{}:{:02} {}", if n.hour % 12 == 0 { 12 } else { n.hour % 12 }, n.minute, nacre_core::i18n::day_period(lang, n.hour))
     };
     (date, time)
 }
@@ -374,10 +385,10 @@ fn privacy_dots(p: &mut Painter, c: &ContainerVisual, f: Frame, (mic, cam): (boo
 }
 
 pub(super) fn count_text(n: usize) -> String {
-    if crate::prefs::get().lang == nacre_core::i18n::Lang::En {
-        format!("{n} {}", if n == 1 { "file" } else { "files" })
-    } else {
-        format!("{n} berkas")
+    match crate::prefs::get().lang {
+        nacre_core::i18n::Lang::Id => format!("{n} berkas"),
+        nacre_core::i18n::Lang::En => format!("{n} {}", if n == 1 { "file" } else { "files" }),
+        nacre_core::i18n::Lang::Es => format!("{n} {}", if n == 1 { "archivo" } else { "archivos" }),
     }
 }
 
@@ -948,7 +959,7 @@ fn compact_pill(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data) {
 
 fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &mut Vec<Region>) {
     use nacre_core::notch::state::TODO_ROW;
-    let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+    let lang = crate::prefs::get().lang;
     let pad = p.px(20.0);
     let top = p.px(50.0);
     let lw = p.px(150.0);
@@ -958,13 +969,13 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         let hw = p.measure(&hero, 38.0, 800);
         p.text(c, &hero, lx, top - p.px(4.0), 38.0, 800, WHITE, 1.0, Anchor::Left, hw + p.px(6.0));
         p.text(c, &format!("/{}", d.todo_total), lx + hw + p.px(2.0), top + p.px(7.0), 22.0, 700, GREEN, 0.95, Anchor::Left, p.px(80.0));
-        let sub = if en { "tasks done" } else { "tugas selesai" };
+        let sub = localized("tugas selesai", "tasks done", "tareas completadas");
         p.text(c, sub, lx + p.px(2.0), top + p.px(42.0), 12.5, 500, WHITE, 0.55, Anchor::Left, lw);
     } else {
         p.sym(c, Sym::Check, lx + p.px(14.0), top + p.px(14.0), 20.0, GREEN, 0.9);
-        let msg = if en { "No tasks yet" } else { "Belum ada tugas" };
+        let msg = localized("Belum ada tugas", "No tasks yet", "Aún no hay tareas");
         p.text(c, msg, lx, top + p.px(34.0), 13.0, 600, WHITE, 0.85, Anchor::Left, lw);
-        let hint = if en { "Or press Ctrl+Alt+N" } else { "Atau tekan Ctrl+Alt+N" };
+        let hint = localized("Atau tekan Ctrl+Alt+N", "Or press Ctrl+Alt+N", "O pulsa Ctrl+Alt+N");
         p.text(c, hint, lx, top + p.px(52.0), 11.5, 500, WHITE, 0.5, Anchor::Left, lw);
     }
     let mut ly = top + p.px(66.0);
@@ -978,7 +989,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         let cy = ly + bh / 2.0;
         p.rect(c, ck - r, cy - r, 2.0 * r, 2.0 * r, r, rgb(GREEN, 255));
         p.sym(c, Sym::Plus, ck, cy, 10.0, WHITE, 1.0);
-        let label = if en { "Add a task" } else { "Tambah tugas" };
+        let label = localized("Tambah tugas", "Add a task", "Añadir una tarea");
         let th = p.px(13.0) * 1.3;
         p.text(c, label, ck + r + p.px(9.0), cy - th / 2.0, 13.0, 700, if editing { WHITE } else { GREEN }, 1.0, Anchor::Left, lw - p.px(40.0));
         regions.push(Region { x: lx, y: ly, w: lw, h: bh, action: Action::TodoField, vis: group_since(c, n0) });
@@ -997,7 +1008,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         ly += ch + p.px(8.0);
     }
     if d.todo_more > 0 {
-        let more = if en { format!("+{} more", d.todo_more) } else { format!("+{} lainnya", d.todo_more) };
+        let more = format!("+{} {}", d.todo_more, localized("lainnya", "more", "más"));
         p.text(c, &more, lx + p.px(2.0), ly, 11.5, 600, WHITE, 0.5, Anchor::Left, lw);
     }
     let rx = lx + lw + p.px(14.0);
@@ -1044,7 +1055,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         None => {
             if d.todo.is_empty() {
                 let mh = p.px(13.0) * 1.3;
-                let msg = if en { "Your list is empty. Enjoy the quiet." } else { "Daftarmu kosong. Santai dulu." };
+                let msg = localized("Daftarmu kosong. Santai dulu.", "Your list is empty. Enjoy the quiet.", "Tu lista está vacía. Disfruta la calma.");
                 p.text(c, msg, rx + rw / 2.0, top + p.px(52.0) - mh / 2.0, 13.0, 500, WHITE, 0.5, Anchor::Center, rw);
             }
             return;
@@ -1055,13 +1066,13 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
             p.rect(c, rx + p.px(1.5), y + p.px(1.5), rw - p.px(3.0), row_h - p.px(3.0), row_h / 2.0 - p.px(1.5), SURFACE);
             let now = crate::tasks::now();
             let (_, due) = nacre_core::todo::parse(text, now);
-            let chip = due.map(|m| nacre_core::todo::due_label(m, now, en));
+            let chip = due.map(|m| nacre_core::todo::due_label_lang(m, now, lang));
             let chip_w = chip.as_ref().map_or(0.0, |t| p.measure(t, 11.5, 700) + p.px(30.0));
             let tx = rx + p.px(16.0);
             let avail = rw - p.px(30.0) - chip_w;
             let caret_h = row_h - p.px(14.0);
             if text.is_empty() {
-                let ph = if en { "Type a task \u{00B7} e.g. 15:30 meeting" } else { "Ketik tugas \u{00B7} mis. 15:30 rapat" };
+                let ph = localized("Ketik tugas \u{00B7} mis. 15:30 rapat", "Type a task \u{00B7} e.g. 15:30 meeting", "Escribe una tarea \u{00B7} p. ej., reunión a las 15:30");
                 p.text(c, ph, tx, cy - lh / 2.0, 14.0, 500, WHITE, 0.4, Anchor::Left, avail);
                 if *caret {
                     p.rect(c, tx, cy - caret_h / 2.0, p.px(1.8), caret_h, p.px(0.9), rgb(GREEN, 255));
@@ -1291,13 +1302,12 @@ fn side_chip(p: &mut Painter, c: &ContainerVisual, right: f32, top: f32, d: &Dat
 
 #[allow(clippy::too_many_arguments)]
 fn focus_stats(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h: f32, d: &Data) {
-    use nacre_core::focus::duration_label;
     card(p, c, x, y, w, h);
-    let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+    let lang = crate::prefs::get().lang;
     let f = &d.focus;
     let pad = p.px(16.0);
     p.text(c, tr("Hari ini"), x + pad, y + p.px(12.0), 11.5, 500, WHITE, 0.55, Anchor::Left, w * 0.5);
-    p.text(c, &duration_label(f.today.minutes, en), x + pad, y + p.px(28.0), 24.0, 700, WHITE, 1.0, Anchor::Left, w - 2.0 * pad);
+    p.text(c, &nacre_core::focus::duration_label_lang(f.today.minutes, lang), x + pad, y + p.px(28.0), 24.0, 700, WHITE, 1.0, Anchor::Left, w - 2.0 * pad);
     let sub = match f.today.top {
         Some(t) => format!("{} {} \u{00B7} {}", f.today.sessions, tr("sesi"), f.names[t]),
         None => tr("Belum ada sesi").to_string(),
@@ -1394,11 +1404,11 @@ fn timer_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h: f
 fn calendar_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h: f32, d: &Data, regions: &mut Vec<Region>) {
     use nacre_core::island::calendar::{add_days, month_short, weekday, weekday_short};
     card(p, c, x, y, w, h);
-    let en = crate::prefs::get().lang == nacre_core::i18n::Lang::En;
+    let lang = crate::prefs::get().lang;
     let cal = &d.cal;
     let accent = crate::prefs::accent();
     let (sy, sm, sd) = cal.sel;
-    p.text(c, month_short(sm, en), x + p.px(16.0), y + p.px(12.0), 18.0, 700, WHITE, 1.0, Anchor::Left, p.px(60.0));
+    p.text(c, month_short(sm, lang), x + p.px(16.0), y + p.px(12.0), 18.0, 700, WHITE, 1.0, Anchor::Left, p.px(60.0));
     p.text(c, &sy.to_string(), x + p.px(16.0), y + p.px(36.0), 11.0, 500, WHITE, 0.45, Anchor::Left, p.px(60.0));
     let (left, right) = (x + p.px(70.0), x + w - p.px(10.0));
     let cell = (right - left) / 5.0;
@@ -1408,7 +1418,7 @@ fn calendar_card(p: &mut Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h
         let cx = left + cell * (i + 2) as f32 + cell / 2.0;
         let selected = i == 0;
         let today = (yy, mm, dd) == cal.today;
-        let wd = weekday_short(weekday(yy, mm, dd), en);
+        let wd = weekday_short(weekday(yy, mm, dd), lang);
         let n0 = kids(c);
         p.text(c, wd, cx, wy, 9.0, 600, if selected { accent } else { WHITE }, if selected { 1.0 } else { 0.4 }, Anchor::Center, cell);
         if selected {
