@@ -27,10 +27,12 @@
   <img alt="Rust" src="https://img.shields.io/badge/Made%20with-Rust-orange?logo=rust">
   <img alt="License" src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue">
   <img alt="Telemetry" src="https://img.shields.io/badge/data%20collected-none-success">
+  <a href="https://abdeealfarizi.github.io/abra-site/"><img alt="Website" src="https://img.shields.io/badge/Website-abra--site-0a84ff"></a>
   <a href="https://saweria.co/kreativadev"><img alt="Buy me a coffee" src="https://img.shields.io/badge/Buy%20me%20a%20coffee-Saweria-faae2b?logo=buymeacoffee&logoColor=black"></a>
 </p>
 
 <p align="center">
+  <a href="https://abdeealfarizi.github.io/abra-site/">Website</a> ·
   <a href="#-install">Install</a> ·
   <a href="#-how-to-use-each-feature">How to use</a> ·
   <a href="#-modular-turn-off-what-you-dont-want">Modular</a> ·
@@ -213,7 +215,7 @@ Use only the Deck with your normal taskbar, only the Visor, only the Rail — an
 
 > Requires **Windows 11** (build 22000 or newer), 64‑bit.
 
-Download from the **[Releases](https://github.com/abdeealfarizi/abra/releases)** page:
+Download from the **[Releases](https://github.com/abdeealfarizi/abra/releases)** page, or from the **[ABRA website](https://abdeealfarizi.github.io/abra-site/)**, which always links to the latest version:
 
 | File | Best for |
 |---|---|
