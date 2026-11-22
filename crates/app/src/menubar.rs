@@ -115,8 +115,16 @@ pub fn refresh_radios() {
     });
 }
 
-fn english() -> bool {
-    prefs::get().lang == nacre_core::i18n::Lang::En
+fn current_lang() -> nacre_core::i18n::Lang {
+    prefs::get().lang
+}
+
+fn native_text(text: &str) -> String {
+    if current_lang() == nacre_core::i18n::Lang::Es {
+        nacre_core::i18n::menu_es(text).unwrap_or(text).to_string()
+    } else {
+        text.to_string()
+    }
 }
 
 fn recolor(b: &Bitmap, rgb: [u8; 3]) -> Vec<u8> {
@@ -668,13 +676,13 @@ impl Bar {
             LItem { id: APP, width: t(&self.app_label(), APP_W) },
         ];
         if self.native.is_empty() {
-            let en = english();
+            let lang = current_lang();
             for (i, m) in self.profile().iter().enumerate() {
-                left.push(LItem { id: PROF0 + i as u32, width: t(m.title(en), BAR_W) });
+                left.push(LItem { id: PROF0 + i as u32, width: t(m.title(lang), BAR_W) });
             }
         } else {
             for (i, top) in self.native.iter().enumerate().take(20) {
-                left.push(LItem { id: NATIVE0 + i as u32, width: t(&top.title, BAR_W) });
+                left.push(LItem { id: NATIVE0 + i as u32, width: t(&native_text(&top.title), BAR_W) });
             }
         }
         let icon_w = 30.0 * d;
@@ -719,22 +727,19 @@ impl Bar {
         let n = time::local_now();
         let lang = prefs::get().lang;
         let wd = nacre_core::island::calendar::weekday(n.year, n.month, n.day) as usize;
-        let days = nacre_core::i18n::weekday_labels(lang, false, nacre_core::island::calendar::weekday_labels(false));
-        let months_en = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        let months_id = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-        let mon = match lang {
-            nacre_core::i18n::Lang::En => months_en[(n.month - 1) as usize % 12],
-            nacre_core::i18n::Lang::Id => months_id[(n.month - 1) as usize % 12],
-        };
+        let days = nacre_core::i18n::weekday_labels(lang, false, nacre_core::island::calendar::weekday_labels(nacre_core::i18n::Lang::Id, false));
+        let mon: String = nacre_core::i18n::month_name(lang, n.month, nacre_core::island::calendar::month_name(n.month))
+            .chars().take(3).collect();
         let time = if prefs::get().clock_24h {
-            format!("{:02}.{:02}", n.hour, n.minute)
+            let sep = if lang == nacre_core::i18n::Lang::Id { '.' } else { ':' };
+            format!("{:02}{sep}{:02}", n.hour, n.minute)
         } else {
-            let (h12, ap) = (if n.hour % 12 == 0 { 12 } else { n.hour % 12 }, if n.hour < 12 { "AM" } else { "PM" });
+            let (h12, ap) = (if n.hour % 12 == 0 { 12 } else { n.hour % 12 }, nacre_core::i18n::day_period(lang, n.hour));
             format!("{h12}:{:02} {ap}", n.minute)
         };
         match lang {
             nacre_core::i18n::Lang::En => format!("{} {} {}  {}", days[wd % 7], mon, n.day, time),
-            nacre_core::i18n::Lang::Id => format!("{} {} {}  {}", days[wd % 7], n.day, mon, time),
+            nacre_core::i18n::Lang::Id | nacre_core::i18n::Lang::Es => format!("{} {} {}  {}", days[wd % 7], n.day, mon, time),
         }
     }
 
@@ -979,11 +984,11 @@ impl Bar {
                 LOGO => self.draw_logo(p.x, p.w),
                 APP => self.draw_text(&app, APP_W, p.x, p.w, 1.0),
                 n if (PROF0..PROF0 + 12).contains(&n) => {
-                    let title = self.profile().get((n - PROF0) as usize).map(|m| m.title(english())).unwrap_or("");
+                    let title = self.profile().get((n - PROF0) as usize).map(|m| m.title(current_lang())).unwrap_or("");
                     self.draw_text(title, BAR_W, p.x, p.w, 1.0)
                 }
                 n if n >= NATIVE0 && n < NATIVE0 + 20 => {
-                    let title = self.native.get((n - NATIVE0) as usize).map(|t| t.title.clone()).unwrap_or_default();
+                    let title = self.native.get((n - NATIVE0) as usize).map(|t| native_text(&t.title)).unwrap_or_default();
                     self.draw_text(&title, BAR_W, p.x, p.w, 1.0)
                 }
                 _ => {}
@@ -1182,7 +1187,7 @@ impl Bar {
                         return Item::separator();
                     }
                     let pad = "    ".repeat(e.depth as usize);
-                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, e.label);
+                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, native_text(&e.label));
                     let it = Item::action(if e.header { 0 } else { NATIVE_CMD + e.id as usize }, &label, e.enabled && !e.header);
                     if e.accel.is_empty() { it } else { it.with_accel(&e.accel) }
                 })
@@ -1253,7 +1258,7 @@ impl Bar {
                 ]
             }
             n if (PROF0..PROF0 + 12).contains(&n) => {
-                let en = english();
+                let lang = current_lang();
                 let Some(m) = self.profile().get((n - PROF0) as usize) else { return vec![] };
                 m.lines
                     .iter()
@@ -1261,7 +1266,7 @@ impl Bar {
                     .map(|(j, l)| match l {
                         Line::Sep => Item::separator(),
                         Line::Cmd { accel, .. } => {
-                            let it = a(PROF_CMD + (n - PROF0) as usize * 100 + j, l.label(en));
+                            let it = a(PROF_CMD + (n - PROF0) as usize * 100 + j, l.label(lang));
                             if accel.is_empty() { it } else { it.with_accel(accel) }
                         }
                     })

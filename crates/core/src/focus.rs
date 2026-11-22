@@ -153,11 +153,16 @@ pub fn trim(entries: &mut Vec<Entry>, keep: usize) {
 }
 
 pub fn duration_label(minutes: u32, en: bool) -> String {
+    duration_label_lang(minutes, if en { crate::i18n::Lang::En } else { crate::i18n::Lang::Id })
+}
+
+pub fn duration_label_lang(minutes: u32, lang: crate::i18n::Lang) -> String {
     let (h, m) = (minutes / 60, minutes % 60);
-    match (h, en) {
+    match (h, lang) {
         (0, _) => format!("{m}m"),
-        (_, false) => format!("{h}j {m}m"),
-        (_, true) => format!("{h}h {m}m"),
+        (_, crate::i18n::Lang::Id) => format!("{h}j {m}m"),
+        (_, crate::i18n::Lang::En) => format!("{h}h {m}m"),
+        (_, crate::i18n::Lang::Es) => format!("{h} h {m} min"),
     }
 }
 

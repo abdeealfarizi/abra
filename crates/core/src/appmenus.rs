@@ -18,18 +18,24 @@ pub struct Menu {
 }
 
 impl Menu {
-    pub fn title(&self, english: bool) -> &'static str {
-        if english { self.en } else { self.id }
+    pub fn title(&self, lang: crate::i18n::Lang) -> &'static str {
+        match lang {
+            crate::i18n::Lang::Id => self.id,
+            crate::i18n::Lang::En => self.en,
+            crate::i18n::Lang::Es => crate::i18n::menu_es(self.en).unwrap_or(self.id),
+        }
     }
 }
 
 impl Line {
-    pub fn label(&self, english: bool) -> &'static str {
+    pub fn label(&self, lang: crate::i18n::Lang) -> &'static str {
         match self {
             Line::Sep => "",
-            Line::Cmd { id, en, .. } => {
-                if english { en } else { id }
-            }
+            Line::Cmd { id, en, .. } => match lang {
+                crate::i18n::Lang::Id => id,
+                crate::i18n::Lang::En => en,
+                crate::i18n::Lang::Es => crate::i18n::menu_es(en).unwrap_or(id),
+            },
         }
     }
 }
@@ -444,7 +450,9 @@ mod tests {
     #[test]
     fn labels_switch_language() {
         let m = &for_path("brave.exe")[0];
-        assert_eq!((m.title(false), m.title(true)), ("Berkas", "File"));
-        assert_eq!((m.lines[0].label(false), m.lines[0].label(true)), ("Tab Baru", "New Tab"));
+        assert_eq!((m.title(crate::i18n::Lang::Id), m.title(crate::i18n::Lang::En)), ("Berkas", "File"));
+        assert_eq!((m.lines[0].label(crate::i18n::Lang::Id), m.lines[0].label(crate::i18n::Lang::En)), ("Tab Baru", "New Tab"));
+        assert_eq!(m.title(crate::i18n::Lang::Es), "Archivo");
+        assert_eq!(m.lines[0].label(crate::i18n::Lang::Es), "Nueva pestaña");
     }
 }

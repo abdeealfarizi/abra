@@ -58,6 +58,6 @@ pub fn changed() {
     crate::notch::tasks_changed();
 }
 
-pub fn english() -> bool {
-    crate::prefs::get().lang == nacre_core::i18n::Lang::En
+pub fn lang() -> nacre_core::i18n::Lang {
+    crate::prefs::get().lang
 }

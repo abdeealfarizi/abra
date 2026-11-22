@@ -886,7 +886,7 @@ impl Win {
         };
         match page {
             0 => vec![
-                (None, vec![RowDef::Seg(prefs::tr("Bahasa"), vec![("Indonesia", Action::Lang(Lang::Id)), ("English", Action::Lang(Lang::En))], if s.lang == Lang::Id { 0 } else { 1 })]),
+                (None, vec![RowDef::Seg(prefs::tr("Bahasa"), vec![("Indonesia", Action::Lang(Lang::Id)), ("English", Action::Lang(Lang::En)), ("Español", Action::Lang(Lang::Es))], match s.lang { Lang::Id => 0, Lang::En => 1, Lang::Es => 2 })]),
                 (
                     Some(prefs::tr("Sistem")),
                     vec![
@@ -908,8 +908,11 @@ impl Win {
                     Some(prefs::tr("Tentang")),
                     {
                         use crate::updater::Phase;
-                        let en = s.lang == Lang::En;
-                        let ver: &'static str = if en { concat!("Version ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access") } else { concat!("Versi ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access") };
+                        let ver: &'static str = match s.lang {
+                            Lang::Id => concat!("Versi ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
+                            Lang::En => concat!("Version ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
+                            Lang::Es => concat!("Versión ", env!("CARGO_PKG_VERSION"), " \u{00B7} Acceso anticipado"),
+                        };
                         let button = match crate::updater::phase() {
                             Phase::Idle => prefs::tr("Periksa pembaruan").to_string(),
                             Phase::Checking => prefs::tr("Memeriksa\u{2026}").to_string(),
