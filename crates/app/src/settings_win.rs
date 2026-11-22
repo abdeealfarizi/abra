@@ -960,7 +960,7 @@ impl Win {
                     RowDef::Toggle(prefs::tr("Aktifkan Visor"), s.notch_enabled, Action::NotchOn),
                     RowDef::Seg(prefs::tr("Bentuk"), vec![(prefs::tr("Visor"), Action::NotchShape(false)), (prefs::tr("Capsule"), Action::NotchShape(true))], if s.notch_island { 1 } else { 0 }),
                     RowDef::Seg(prefs::tr("Perilaku"), behaviors(false), beh_idx(s.notch)),
-                    RowDef::Slider(prefs::tr("Ukuran"), s.notch_scale, 12),
+                    RowDef::Slider(prefs::tr("Ukuran Visor"), s.notch_scale, 12),
                     RowDef::Seg(
                         prefs::tr("Visualizer musik"),
                         nacre_core::theme::VisStyle::ALL.iter().map(|v| (prefs::tr(v.title()), Action::Visualizer(*v))).collect(),

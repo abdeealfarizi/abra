@@ -586,7 +586,7 @@ impl Mgr {
             }
             Kind::Month => {
                 let current_lang = lang();
-                let monday_first = current_lang != nacre_core::i18n::Lang::Id;
+                let monday_first = current_lang != nacre_core::i18n::Lang::En;
                 let g = calendar::grid(n.year, n.month, monday_first);
                 self.text(p, &month_label(n.month).to_uppercase(), 11.0 * d, 700, RED, 14.0 * d, 11.0 * d, 0, 1.0);
                 let labels = calendar::weekday_labels(current_lang, monday_first);

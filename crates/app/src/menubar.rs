@@ -119,14 +119,6 @@ fn current_lang() -> nacre_core::i18n::Lang {
     prefs::get().lang
 }
 
-fn native_text(text: &str) -> String {
-    if current_lang() == nacre_core::i18n::Lang::Es {
-        nacre_core::i18n::menu_es(text).unwrap_or(text).to_string()
-    } else {
-        text.to_string()
-    }
-}
-
 fn recolor(b: &Bitmap, rgb: [u8; 3]) -> Vec<u8> {
     let mut out = b.bgra.clone();
     for px in out.chunks_exact_mut(4) {
@@ -682,7 +674,7 @@ impl Bar {
             }
         } else {
             for (i, top) in self.native.iter().enumerate().take(20) {
-                left.push(LItem { id: NATIVE0 + i as u32, width: t(&native_text(&top.title), BAR_W) });
+                left.push(LItem { id: NATIVE0 + i as u32, width: t(&top.title, BAR_W) });
             }
         }
         let icon_w = 30.0 * d;
@@ -988,7 +980,7 @@ impl Bar {
                     self.draw_text(title, BAR_W, p.x, p.w, 1.0)
                 }
                 n if n >= NATIVE0 && n < NATIVE0 + 20 => {
-                    let title = self.native.get((n - NATIVE0) as usize).map(|t| native_text(&t.title)).unwrap_or_default();
+                    let title = self.native.get((n - NATIVE0) as usize).map(|t| t.title.clone()).unwrap_or_default();
                     self.draw_text(&title, BAR_W, p.x, p.w, 1.0)
                 }
                 _ => {}
@@ -1187,7 +1179,7 @@ impl Bar {
                         return Item::separator();
                     }
                     let pad = "    ".repeat(e.depth as usize);
-                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, native_text(&e.label));
+                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, e.label);
                     let it = Item::action(if e.header { 0 } else { NATIVE_CMD + e.id as usize }, &label, e.enabled && !e.header);
                     if e.accel.is_empty() { it } else { it.with_accel(&e.accel) }
                 })

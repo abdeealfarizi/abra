@@ -62,7 +62,15 @@ It is one small native program: no Electron, no web view, no background services
   <img src="assets/screenshots/desktop.png" alt="ABRA desktop: Deck, Rail, Visor and widgets" width="900">
 </p>
 
-### 🆕 New in 0.6.0
+### 🆕 New in 0.6.1
+
+- **Español**: ABRA now speaks Spanish (*Settings → General → Language*). The whole interface is translated, including
+  dates, the calendar, Focus sessions, tasks, the Rail app menus and the Send to phone page. Thanks to
+  [itssebxs](https://github.com/itssebxs) for this community contribution!
+- The Visor size slider is now labelled **Visor size**, so it no longer shares its name with the Deck's size group.
+- Other apps' own menus in the Rail are shown exactly as the app provides them, in every language.
+
+### 0.6.0
 
 - **More than one screen**: choose where the Deck, Rail, Visor and desktop widgets appear (*Main*, *Screen 1*, *Screen 2*…)
   under **Show on** in each page of Settings. Unplug a screen and everything moves to the main one; plug it back in and
@@ -219,12 +227,12 @@ Download from the **[Releases](https://github.com/abdeealfarizi/abra/releases)**
 
 | File | Best for |
 |---|---|
-| `ABRA-Setup-0.6.0.exe` | Most people. Per‑user install, **no administrator rights**, optional Start menu shortcut and “launch at sign‑in”, clean uninstall from *Windows Settings → Apps*. |
-| `ABRA-0.6.0-win-x64.zip` | Portable. Extract anywhere and keep `abra.exe`, `abra-guard.exe` and the `fonts` folder **together**. |
+| `ABRA-Setup-0.6.1.exe` | Most people. Per‑user install, **no administrator rights**, optional Start menu shortcut and “launch at sign‑in”, clean uninstall from *Windows Settings → Apps*. |
+| `ABRA-0.6.1-win-x64.zip` | Portable. Extract anywhere and keep `abra.exe`, `abra-guard.exe` and the `fonts` folder **together**. |
 
 ### Installer
 
-1. Run `ABRA-Setup-0.6.0.exe`.
+1. Run `ABRA-Setup-0.6.1.exe`.
 2. Windows SmartScreen may warn about an unsigned app: choose **More info → Run anyway** (only for files from this repository).
 3. Pick the options you want (Start menu shortcut, launch at sign‑in) and finish. ABRA starts.
 
@@ -237,7 +245,7 @@ Alt+Tab, moving other apps’ windows, and starting at sign‑in. There is no te
 To make sure your copy is the real one:
 
 1. Download only from the **[Releases](https://github.com/abdeealfarizi/abra/releases)** page of this repository.
-2. In PowerShell run `Get-FileHash .\ABRA-Setup-0.6.0.exe -Algorithm SHA256` and compare the result with the
+2. In PowerShell run `Get-FileHash .\ABRA-Setup-0.6.1.exe -Algorithm SHA256` and compare the result with the
    **sha256** shown next to the file on the Releases page. They must match exactly.
 3. If you prefer, build ABRA yourself from source (see below).
 
@@ -254,11 +262,11 @@ Protection history*, but only after the fingerprint check above matches.
 - The Windows taskbar hides and the Rail, Visor and Deck appear. The Deck hides itself until you move the pointer to the
   bottom of the screen (turn the takeover off in *Settings → General* if you prefer your taskbar).
 - Open **Settings**: right‑click the Deck → **ABRA Settings…**, or click the logo in the Rail.
-- Language: *Settings → General → Language* (**English** or **Indonesia**).
+- Language: *Settings → General → Language* (**English**, **Indonesia** or **Español**).
 
 ### Updating from an older version
 
-Install 0.6.0 over the old version. Your settings, pinned apps and Quick Panel layout are kept. From 0.5.0 on, ABRA
+Install 0.6.1 over the old version. Your settings, pinned apps and Quick Panel layout are kept. From 0.5.0 on, ABRA
 offers new versions itself.
 
 ### Quit and uninstall
@@ -332,7 +340,7 @@ The glass pill at the top center of the screen. Choose **Visor** (attached to th
 - **Pages**: switch with the dots at the bottom or the mouse wheel. Each page has its own colour.
 - **Pills**: reminders, available updates and connected devices appear briefly in the Visor. Click a pill to act on it,
   right‑click to dismiss it. Choose which ones you want in *Settings → Visor → Pills & Context*.
-- **Size and Capsule distance**: *Settings → Visor → Size* and *Distance from top edge*.
+- **Size and Capsule distance**: *Settings → Visor → Visor size* and *Distance from top edge*.
 </details>
 
 <details open>
@@ -530,11 +538,11 @@ You get `abra.exe` and `abra-guard.exe` in `target\release\`.
 cargo test --workspace
 
 winget install JRSoftware.InnoSetup                            # once
-powershell -File installer\build-installer.ps1 -Version 0.6.0
+powershell -File installer\build-installer.ps1 -Version 0.6.1
 ```
 
 The release script rebuilds ABRA with local paths stripped, **refuses to continue** if a binary still contains your user
-name or a local path, and writes `dist\ABRA-Setup-0.6.0.exe` and `dist\ABRA-0.6.0-win-x64.zip`.
+name or a local path, and writes `dist\ABRA-Setup-0.6.1.exe` and `dist\ABRA-0.6.1-win-x64.zip`.
 
 ### 4. Safe experiments
 

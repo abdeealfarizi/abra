@@ -442,6 +442,7 @@ const EN: &[(&str, &str)] = &[
     ("Tidak tersedia", "Unavailable"),
     ("Animasi jendela (minimize, tutup, buka)", "Window animations (minimize, close, open)"),
     ("Ukuran", "Layout"),
+    ("Ukuran Visor", "Visor size"),
     ("Ukuran ikon", "Icon size"),
     ("Jarak antar ikon", "Icon spacing"),
     ("Zoom saat hover", "Hover zoom"),
@@ -958,6 +959,7 @@ const ES: &[(&str, &str)] = &[
 ("Tidak tersedia", "No disponible"),
 ("Animasi jendela (minimize, tutup, buka)", "Animaciones de ventana (minimizar, cerrar, abrir)"),
 ("Ukuran", "Diseño"),
+("Ukuran Visor", "Tamaño del Visor"),
 ("Ukuran ikon", "Tamaño de icono"),
 ("Jarak antar ikon", "Espacio entre iconos"),
 ("Zoom saat hover", "Zoom al pasar el cursor"),
@@ -1170,7 +1172,7 @@ pub fn tr(lang: Lang, src: &'static str) -> &'static str {
     match lang {
         Lang::Id => src,
         Lang::En => EN.iter().find(|(k, _)| *k == src).map(|(_, v)| *v).unwrap_or(src),
-        Lang::Es => ES.iter().find(|(k, _)| *k == src).map(|(_, v)| *v).unwrap_or(src),
+        Lang::Es => ES.iter().find(|(k, _)| *k == src).map(|(_, v)| *v).unwrap_or_else(|| tr(Lang::En, src)),
     }
 }
 
@@ -1221,9 +1223,23 @@ mod tests {
     }
 
     #[test]
+    fn spanish_translates_and_falls_back_to_english() {
+        assert_eq!(tr(Lang::Es, "Pengaturan"), "Ajustes");
+        assert_eq!(tr(Lang::Es, "Ukuran Visor"), "Tamaño del Visor");
+        assert_eq!(tr(Lang::En, "Ukuran Visor"), "Visor size");
+        assert_eq!(tr(Lang::Es, "tidak ada"), "tidak ada");
+        for (k, v) in EN.iter() {
+            let es = tr(Lang::Es, k);
+            assert!(ES.iter().any(|(e, _)| e == k) || es == *v, "teks tanpa terjemahan Spanyol harus jatuh ke Inggris: {k}");
+        }
+    }
+
+    #[test]
     fn no_duplicate_keys() {
-        for (i, (k, _)) in EN.iter().enumerate() {
-            assert!(!EN[i + 1..].iter().any(|(k2, _)| k2 == k), "duplikat: {k}");
+        for table in [EN, ES] {
+            for (i, (k, _)) in table.iter().enumerate() {
+                assert!(!table[i + 1..].iter().any(|(k2, _)| k2 == k), "duplikat: {k}");
+            }
         }
     }
 

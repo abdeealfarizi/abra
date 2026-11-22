@@ -238,7 +238,7 @@ lembut berwarna sampul album bergerak di bagian bawah Visor dan Capsule, naik-tu
 
 ### Ukuran dan jarak
 
-Pengaturan → Visor → **Ukuran** (80–130%) mengubah besar Visor dan Capsule. Untuk bentuk Capsule ada **Jarak dari tepi atas**.
+Pengaturan → Visor → **Ukuran Visor** (80–130%) mengubah besar Visor dan Capsule. Untuk bentuk Capsule ada **Jarak dari tepi atas**.
 Berganti Visor ↔ Capsule memakai animasi "tetesan air".
 
 ## 4. Rail
@@ -383,7 +383,7 @@ Jendela Pengaturan ABRA bergaya panel pengaturan modern: sidebar berikon warna d
 
 | Halaman | Isi |
 |---|---|
-| **Umum** | Bahasa (Indonesia/English), jalankan saat login, sembunyikan taskbar Windows, sembunyikan ikon desktop, selalu di atas jendela layar penuh, animasi jendela, bayangan jendela aktif |
+| **Umum** | Bahasa (Indonesia, English, Español), jalankan saat login, sembunyikan taskbar Windows, sembunyikan ikon desktop, selalu di atas jendela layar penuh, animasi jendela, bayangan jendela aktif |
 | **Deck** | Aktifkan Deck, perilaku, **Tampilkan di** (bila ada lebih dari satu layar), **Kepekaan** (Cepat atau Santai), ikon seragam, ukuran ikon, jarak, zoom, jarak dari tepi, kebulatan sudut |
 | **Visor** | Aktifkan Visor, bentuk, perilaku, **Tampilkan di**, **Visualizer musik** (Batang, Spektrum, Gelombang, Titik), kebulatan sudut, buka otomatis saat kursor di Visor, **Kepekaan** (Cepat atau Santai), **Modul Capsule** (modul, urutan, tata letak, hiasan) |
 | **Rail** | Aktifkan Rail, perilaku, **Tampilkan di**, **Kepekaan** (Cepat atau Santai), latar (Transparan, Terang, Gelap, Material), jam 24 jam |
