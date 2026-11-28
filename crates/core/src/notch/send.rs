@@ -60,6 +60,7 @@ pub fn page(token: &str, files: &[(String, u64)], lang: crate::i18n::Lang) -> St
         crate::i18n::Lang::Id => ("Dikirim dari ABRA", "Ketuk berkas untuk menyimpannya ke HP ini.", "Unduh"),
         crate::i18n::Lang::En => ("Sent from ABRA", "Tap a file to save it to this phone.", "Download"),
         crate::i18n::Lang::Es => ("Enviado desde ABRA", "Toca un archivo para guardarlo en este teléfono.", "Descargar"),
+        crate::i18n::Lang::Vi => ("Gửi từ ABRA", "Chạm vào tệp để lưu về điện thoại này.", "Tải xuống"),
     };
     let mut rows = String::new();
     for (i, (name, size)) in files.iter().enumerate() {

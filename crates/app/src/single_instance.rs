@@ -1,4 +1,3 @@
-use windows::core::w;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, HWND, WPARAM, LPARAM, ERROR_ALREADY_EXISTS, HANDLE};
 use windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE,

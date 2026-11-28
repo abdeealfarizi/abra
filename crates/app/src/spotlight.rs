@@ -1,6 +1,6 @@
 use crate::popup::Popup;
 use crate::{motion, paths, prefs};
-use nacre_core::appcat::{self, Cat};
+use nacre_core::appcat;
 use nacre_core::search;
 use nacre_core::spotlight::{self as model, Mode, ACTIONS};
 use nacre_core::symbols::{self, Sym};
@@ -21,7 +21,6 @@ use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
 use windows_core::{Interface, HSTRING};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_BACK, VK_DELETE, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT,
     VK_SPACE, VK_TAB, VK_UP,
@@ -110,7 +109,6 @@ struct Row {
 enum HitKind {
     Mode(Mode),
     Filter(Filter),
-    Cat(Option<Cat>),
     Row(usize),
     Cell(usize),
     ShowMore(usize),
@@ -134,7 +132,6 @@ struct Spot {
     gfx: Gfx,
     comp: Compositor,
     dpi: f32,
-    screen: (i32, i32),
     mode: Mode,
     query: String,
     rows: Vec<Row>,
@@ -142,7 +139,6 @@ struct Spot {
     scroll: usize,
     apps: Vec<App>,
     names: Vec<String>,
-    cat: Option<Cat>,
     filter: Option<Filter>,
     files: Vec<Hit>,
     files_gen: u64,
@@ -431,7 +427,6 @@ fn create(comp: &Compositor, mode: Mode) -> windows_core::Result<Box<Spot>> {
         gfx,
         comp: comp.clone(),
         dpi,
-        screen,
         mode: Mode::Search,
         query: String::new(),
         rows: vec![],
@@ -439,7 +434,6 @@ fn create(comp: &Compositor, mode: Mode) -> windows_core::Result<Box<Spot>> {
         scroll: 0,
         apps,
         names,
-        cat: None,
         filter: None,
         files: vec![],
         files_gen: 0,
@@ -564,7 +558,6 @@ impl Spot {
         self.query.clear();
         self.sel = 0;
         self.scroll = 0;
-        self.cat = None;
         self.filter = None;
         self.editing = None;
         self.edit_buf.clear();
@@ -1974,12 +1967,6 @@ unsafe extern "system" fn spot_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     }
                     HitKind::Filter(f) => {
                         s.filter = if s.filter == Some(f) { None } else { Some(f) };
-                        s.rebuild_rows();
-                        s.render();
-                        Run::Nothing
-                    }
-                    HitKind::Cat(c) => {
-                        s.cat = c;
                         s.rebuild_rows();
                         s.render();
                         Run::Nothing

@@ -3,7 +3,7 @@ use nacre_platform::text::{measure, render, Style};
 use nacre_ui::gfx::Gfx;
 use nacre_ui::glass::{GlassParams, Tier};
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::collections::HashMap;
 use windows::core::w;
 use windows::UI::Color;
 use windows::UI::Composition::{CompositionStretch, Compositor, SpriteVisual};
@@ -16,8 +16,6 @@ use windows_numerics::{Vector2, Vector3};
 
 pub const MENU_PICK: u32 = WM_APP + 12;
 pub const MENU_CLOSE: u32 = WM_APP + 13;
-
-static TARGET: AtomicIsize = AtomicIsize::new(0);
 
 #[derive(Clone)]
 pub struct Item {
@@ -33,11 +31,12 @@ pub struct Item {
     pub lead: Option<(nacre_core::symbols::Sym, bool)>,
     pub trail: Vec<nacre_core::symbols::Sym>,
     pub keep_open: bool,
+    pub children: Vec<Item>,
 }
 
 impl Item {
     pub fn action(id: usize, label: &str, enabled: bool) -> Item {
-        Item { id, label: label.to_string(), enabled, separator: false, accel: String::new(), sym: None, toggle: None, heading: false, title: false, lead: None, trail: Vec::new(), keep_open: false }
+        Item { id, label: label.to_string(), enabled, separator: false, accel: String::new(), sym: None, toggle: None, heading: false, title: false, lead: None, trail: Vec::new(), keep_open: false, children: Vec::new() }
     }
     pub fn separator() -> Item {
         Item { separator: true, ..Item::action(0, "", false) }
@@ -54,6 +53,13 @@ impl Item {
     }
     pub fn with_trail(mut self, s: Vec<nacre_core::symbols::Sym>) -> Item {
         self.trail = s;
+        self
+    }
+    pub fn with_children(mut self, children: Vec<Item>) -> Item {
+        if !children.is_empty() && self.trail.is_empty() {
+            self.trail.push(nacre_core::symbols::Sym::ChevronRight);
+        }
+        self.children = children;
         self
     }
     pub fn keep_open(mut self) -> Item {
@@ -80,9 +86,18 @@ pub struct Card {
 const T_HIDE: usize = 77;
 
 struct Live {
+    target: HWND,
+    parent_hwnd: isize,
+    comp: Compositor,
+    gfx: Gfx,
+    dpi: f32,
+    tier: Tier,
+    px: i32,
+    py: i32,
     rows: Vec<(f32, f32, Item)>,
     size: (f32, f32),
     hover: Option<usize>,
+    open_sub: Option<usize>,
     highlight: SpriteVisual,
     boxes: Vec<windows::UI::Composition::ContainerVisual>,
     pad: f32,
@@ -91,7 +106,31 @@ struct Live {
 }
 
 thread_local! {
-    static LIVE: RefCell<Option<Live>> = const { RefCell::new(None) };
+    static LIVE: RefCell<HashMap<isize, Live>> = RefCell::new(HashMap::new());
+    static SUBS: RefCell<HashMap<isize, Box<Menu>>> = RefCell::new(HashMap::new());
+}
+
+fn close_sub(parent_key: isize) {
+    nacre_platform::input::set_extra_rect(None);
+    SUBS.with(|s| {
+        if let Some(sub) = s.borrow_mut().get_mut(&parent_key) {
+            sub.hide_sub();
+        }
+    });
+}
+
+fn open_sub(parent_key: isize, items: Vec<Item>, px: i32, py: i32, pw: i32, row_y: i32, pad: i32, comp: &Compositor, gfx: &Gfx, target: HWND, dpi: f32, tier: Tier) {
+    SUBS.with(|s| {
+        let mut map = s.borrow_mut();
+        if !map.contains_key(&parent_key) {
+            if let Ok(m) = Menu::new_tier(comp, target, dpi, tier) {
+                map.insert(parent_key, Box::new(m));
+            }
+        }
+        if let Some(sub) = map.get_mut(&parent_key) {
+            let _ = sub.show_sub(comp, gfx, items, px, py, pw, row_y, pad, parent_key);
+        }
+    });
 }
 
 fn tint(src: &[u8], rgb: [u8; 3]) -> Vec<u8> {
@@ -174,27 +213,63 @@ fn xy(lp: LPARAM) -> (f32, f32) {
 }
 
 unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
-    let target = HWND(TARGET.load(Ordering::Relaxed) as *mut _);
+    let key = h.0 as isize;
     match m {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_MOUSEMOVE => {
             let (x, y) = xy(l);
             let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
             let _ = TrackMouseEvent(&mut t);
-            LIVE.with(|c| {
-                if let Some(live) = c.borrow_mut().as_mut() {
-                    let hit = row_at(live, x, y).filter(|i| live.rows[*i].2.toggle.is_none());
-                    if hit != live.hover {
-                        set_hover(live, hit);
+            enum SubOp {
+                None,
+                Close,
+                Open { items: Vec<Item>, px: i32, py: i32, pw: i32, row_y: i32, pad: i32, comp: Compositor, gfx: Gfx, target: HWND, dpi: f32, tier: Tier },
+            }
+            let op = LIVE.with(|c| {
+                let mut map = c.borrow_mut();
+                let Some(live) = map.get_mut(&key) else { return SubOp::None };
+                let hit = row_at(live, x, y).filter(|i| live.rows[*i].2.toggle.is_none());
+                if hit != live.hover {
+                    set_hover(live, hit);
+                }
+                if let Some(idx) = hit {
+                    if !live.rows[idx].2.children.is_empty() {
+                        if live.open_sub != Some(idx) {
+                            live.open_sub = Some(idx);
+                            return SubOp::Open {
+                                items: live.rows[idx].2.children.clone(),
+                                px: live.px,
+                                py: live.py,
+                                pw: live.size.0.ceil() as i32,
+                                row_y: live.rows[idx].0.round() as i32,
+                                pad: live.pad.round() as i32,
+                                comp: live.comp.clone(),
+                                gfx: live.gfx.clone(),
+                                target: live.target,
+                                dpi: live.dpi,
+                                tier: live.tier,
+                            };
+                        }
+                    } else if live.open_sub.is_some() {
+                        live.open_sub = None;
+                        return SubOp::Close;
                     }
                 }
+                SubOp::None
             });
+            match op {
+                SubOp::Open { items, px, py, pw, row_y, pad, comp, gfx, target, dpi, tier } => {
+                    open_sub(key, items, px, py, pw, row_y, pad, &comp, &gfx, target, dpi, tier);
+                }
+                SubOp::Close => close_sub(key),
+                SubOp::None => {}
+            }
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
             LIVE.with(|c| {
-                if let Some(live) = c.borrow_mut().as_mut() {
-                    if live.hover.is_some() {
+                if let Some(live) = c.borrow_mut().get_mut(&key) {
+                    if live.hover.is_some() && live.open_sub.is_none() {
                         set_hover(live, None);
                     }
                 }
@@ -203,13 +278,61 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
         }
         WM_LBUTTONUP | WM_RBUTTONUP => {
             let (x, y) = xy(l);
-            let picked = LIVE.with(|c| c.borrow().as_ref().and_then(|live| row_at(live, x, y).map(|i| (live.rows[i].2.id, live.rows[i].2.keep_open || live.owner_hides))));
-            if let Some((id, keep)) = picked {
-                if !keep {
-                    nacre_platform::input::end_dismiss();
-                    let _ = ShowWindow(h, SW_HIDE);
+            enum Pick {
+                None,
+                OpenSub { items: Vec<Item>, px: i32, py: i32, pw: i32, row_y: i32, pad: i32, comp: Compositor, gfx: Gfx, target: HWND, dpi: f32, tier: Tier },
+                Fire { id: usize, keep: bool, target: HWND, parent: isize },
+            }
+            let picked = LIVE.with(|c| {
+                let mut map = c.borrow_mut();
+                let Some(live) = map.get_mut(&key) else { return Pick::None };
+                let Some(i) = row_at(live, x, y) else { return Pick::None };
+                if !live.rows[i].2.children.is_empty() {
+                    live.open_sub = Some(i);
+                    return Pick::OpenSub {
+                        items: live.rows[i].2.children.clone(),
+                        px: live.px,
+                        py: live.py,
+                        pw: live.size.0.ceil() as i32,
+                        row_y: live.rows[i].0.round() as i32,
+                        pad: live.pad.round() as i32,
+                        comp: live.comp.clone(),
+                        gfx: live.gfx.clone(),
+                        target: live.target,
+                        dpi: live.dpi,
+                        tier: live.tier,
+                    };
                 }
-                let _ = PostMessageW(Some(target), MENU_PICK, WPARAM(id), LPARAM(0));
+                Pick::Fire {
+                    id: live.rows[i].2.id,
+                    keep: live.rows[i].2.keep_open || live.owner_hides,
+                    target: live.target,
+                    parent: live.parent_hwnd,
+                }
+            });
+            match picked {
+                Pick::OpenSub { items, px, py, pw, row_y, pad, comp, gfx, target, dpi, tier } => {
+                    open_sub(key, items, px, py, pw, row_y, pad, &comp, &gfx, target, dpi, tier);
+                }
+                Pick::Fire { id, keep, target, parent } => {
+                    if !keep {
+                        close_sub(key);
+                        nacre_platform::input::end_dismiss();
+                        let _ = ShowWindow(h, SW_HIDE);
+                        LIVE.with(|c| {
+                            c.borrow_mut().remove(&key);
+                        });
+                        if parent != 0 {
+                            close_sub(parent);
+                            let _ = ShowWindow(HWND(parent as *mut _), SW_HIDE);
+                            LIVE.with(|c| {
+                                c.borrow_mut().remove(&parent);
+                            });
+                        }
+                    }
+                    let _ = PostMessageW(Some(target), MENU_PICK, WPARAM(id), LPARAM(0));
+                }
+                Pick::None => {}
             }
             LRESULT(0)
         }
@@ -228,6 +351,7 @@ pub struct Menu {
     content: windows::UI::Composition::ContainerVisual,
     highlight: SpriteVisual,
     dpi: f32,
+    tier: Tier,
     card: Option<Card>,
     closing: bool,
     pop_at: Vector3,
@@ -235,6 +359,10 @@ pub struct Menu {
 
 impl Menu {
     pub fn new(comp: &Compositor, dock_hwnd: HWND, dpi: f32, tier: Tier) -> Result<Menu> {
+        Self::new_tier(comp, dock_hwnd, dpi, tier)
+    }
+
+    fn new_tier(comp: &Compositor, dock_hwnd: HWND, dpi: f32, tier: Tier) -> Result<Menu> {
         let mut popup = Popup::new(comp, w!("NacreMenu"), Some(proc), WINDOW_EX_STYLE(0), crate::prefs::glass((10.0, 10.0), 12.0 * dpi, crate::prefs::Role::Dark))?;
         let _ = popup.panel.set_tier(tier);
         let highlight = comp.CreateSpriteVisual()?;
@@ -246,7 +374,7 @@ impl Menu {
         let content = comp.CreateContainerVisual()?;
         popup.content.Children()?.InsertAtTop(&highlight)?;
         popup.content.Children()?.InsertAtTop(&content)?;
-        Ok(Menu { target: dock_hwnd, popup, content, highlight, dpi, card: None, closing: false, pop_at: Vector3 { X: 0.0, Y: 0.0, Z: 0.0 } })
+        Ok(Menu { target: dock_hwnd, popup, content, highlight, dpi, tier, card: None, closing: false, pop_at: Vector3 { X: 0.0, Y: 0.0, Z: 0.0 } })
     }
 
     pub fn set_card(&mut self, card: Option<Card>) {
@@ -254,15 +382,19 @@ impl Menu {
     }
 
     pub fn show_card(&mut self, comp: &Compositor, gfx: &Gfx, items: Vec<Item>, x: i32, top: i32, right_aligned: bool) -> Result<()> {
-        self.show_impl(comp, gfx, items, x, top, false, right_aligned)
+        self.show_impl(comp, gfx, items, x, top, false, right_aligned, None)
     }
 
     pub fn hide_animated(&mut self, comp: &Compositor) {
         if !self.popup.is_visible() || self.closing {
             return;
         }
+        let key = self.popup.hwnd.0 as isize;
+        close_sub(key);
         nacre_platform::input::end_dismiss();
-        LIVE.with(|c| *c.borrow_mut() = None);
+        LIVE.with(|c| {
+            c.borrow_mut().remove(&key);
+        });
         if crate::motion::pop_out(comp, self.popup.root(), self.pop_at, 0.55, crate::motion::CC_CLOSE_MS).is_ok() {
             self.closing = true;
             unsafe {
@@ -278,20 +410,29 @@ impl Menu {
     }
 
     pub fn set_tier(&mut self, t: Tier) {
+        self.tier = t;
         let _ = self.popup.panel.set_tier(t);
     }
 
     pub fn show(&mut self, comp: &Compositor, gfx: &Gfx, items: Vec<Item>, x: i32, y: i32) -> Result<()> {
-        self.show_impl(comp, gfx, items, x, y, true, false)
+        self.show_impl(comp, gfx, items, x, y, true, false, None)
     }
 
     pub fn show_below(&mut self, comp: &Compositor, gfx: &Gfx, items: Vec<Item>, x: i32, top: i32) -> Result<()> {
-        self.show_impl(comp, gfx, items, x, top, false, false)
+        self.show_impl(comp, gfx, items, x, top, false, false, None)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn show_impl(&mut self, comp: &Compositor, gfx: &Gfx, items: Vec<Item>, x: i32, y: i32, above: bool, right_aligned: bool) -> Result<()> {
-        TARGET.store(self.target.0 as isize, Ordering::Relaxed);
+    fn show_sub(&mut self, comp: &Compositor, gfx: &Gfx, items: Vec<Item>, p_px: i32, p_py: i32, p_w: i32, row_y: i32, pad: i32, parent_hwnd: isize) -> Result<()> {
+        self.show_impl(comp, gfx, items, p_px + p_w - (4.0 * self.dpi) as i32, p_py + row_y - pad, false, false, Some((parent_hwnd, p_px)))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn show_impl(&mut self, comp: &Compositor, gfx: &Gfx, items: Vec<Item>, x: i32, y: i32, above: bool, right_aligned: bool, sub_of: Option<(isize, i32)>) -> Result<()> {
+        let key = self.popup.hwnd.0 as isize;
+        if sub_of.is_none() {
+            close_sub(key);
+        }
         let d = self.dpi;
         if self.closing {
             self.closing = false;
@@ -397,14 +538,14 @@ impl Menu {
             }
             if let Some((s, _, th)) = tex(&it.label, &style_of(it))? {
                 let dy = if it.heading { 3.0 * d } else { 0.0 };
-                s.SetOffset(Vector3 { X: label_x(it), Y: ry + (rh - th) / 2.0 + dy, Z: 0.0 })?;
+                s.SetOffset(Vector3 { X: label_x(it).round(), Y: (ry + (rh - th) / 2.0 + dy).round(), Z: 0.0 })?;
                 s.SetOpacity(if it.heading { 0.5 } else if it.enabled { 1.0 } else { 0.38 })?;
                 rb.Children()?.InsertAtTop(&s)?;
             }
             if let Some(sym) = it.sym {
                 let n = (15.0 * d).round() as u32;
                 let s = symbol(sym, n, ink)?;
-                s.SetOffset(Vector3 { X: pad + 12.0 * d, Y: ry + (rh - n as f32) / 2.0, Z: 0.0 })?;
+                s.SetOffset(Vector3 { X: (pad + 12.0 * d).round(), Y: (ry + (rh - n as f32) / 2.0).round(), Z: 0.0 })?;
                 s.SetOpacity(if it.enabled { 0.9 } else { 0.38 })?;
                 rb.Children()?.InsertAtTop(&s)?;
             }
@@ -440,7 +581,7 @@ impl Menu {
             }
             if !it.accel.is_empty() {
                 if let Some((s, aw, ah)) = tex(&it.accel, &style)? {
-                    s.SetOffset(Vector3 { X: w - pad - 12.0 * d - aw, Y: ry + (rh - ah) / 2.0, Z: 0.0 })?;
+                    s.SetOffset(Vector3 { X: (w - pad - 12.0 * d - aw).round(), Y: (ry + (rh - ah) / 2.0).round(), Z: 0.0 })?;
                     s.SetOpacity(if it.enabled { 0.55 } else { 0.3 })?;
                     rb.Children()?.InsertAtTop(&s)?;
                 }
@@ -448,8 +589,12 @@ impl Menu {
         }
         let (wi, hi) = (w.ceil() as i32, h.ceil() as i32);
         let anchor = x;
-        let x = if right_aligned { x - wi } else { x };
         let mon = nacre_platform::monitors::at(anchor, if above { y - 1 } else { y }).area;
+        let x = match sub_of {
+            Some((_, p_px)) if x + wi > mon.right() - 4 => p_px + (4.0 * d) as i32 - wi,
+            _ if right_aligned => x - wi,
+            _ => x,
+        };
         let px = mon.clamp_x(x, wi, 4);
         let py = if above { mon.clamp_y(y - hi, hi, 4) } else { y.clamp(mon.y, (mon.bottom() - hi - 4).max(mon.y)) };
         self.popup.set_rect(px, py, wi, hi)?;
@@ -457,7 +602,28 @@ impl Menu {
         self.highlight.SetOpacity(0.0)?;
         self.highlight.SetBrush(&comp.CreateColorBrushWithColor(crate::prefs::accent_c(235))?)?;
         LIVE.with(|c| {
-            *c.borrow_mut() = Some(Live { rows, size: (w, h), hover: None, highlight: self.highlight.clone(), boxes: boxes.iter().map(|b| b.0.clone()).collect(), pad, hl_max: card.map(|_| (radius - pad).max(6.0 * d)), owner_hides: card.is_some() });
+            c.borrow_mut().insert(
+                key,
+                Live {
+                    target: self.target,
+                    parent_hwnd: sub_of.map_or(0, |s| s.0),
+                    comp: comp.clone(),
+                    gfx: gfx.clone(),
+                    dpi: d,
+                    tier: self.tier,
+                    px,
+                    py,
+                    rows,
+                    size: (w, h),
+                    hover: None,
+                    open_sub: None,
+                    highlight: self.highlight.clone(),
+                    boxes: boxes.iter().map(|b| b.0.clone()).collect(),
+                    pad,
+                    hl_max: card.map(|_| (radius - pad).max(6.0 * d)),
+                    owner_hides: card.is_some(),
+                },
+            );
         });
         if refresh {
             let mut pt = windows::Win32::Foundation::POINT::default();
@@ -466,7 +632,7 @@ impl Menu {
             }
             let (cx, cy) = ((pt.x - px) as f32, (pt.y - py) as f32);
             LIVE.with(|c| {
-                if let Some(live) = c.borrow_mut().as_mut() {
+                if let Some(live) = c.borrow_mut().get_mut(&key) {
                     let hit = row_at(live, cx, cy).filter(|i| live.rows[*i].2.toggle.is_none());
                     set_hover(live, hit);
                 }
@@ -475,16 +641,34 @@ impl Menu {
             let ax = if right_aligned { wi as f32 - 24.0 * d } else { ((anchor - px) as f32 + 12.0 * d).clamp(0.0, wi as f32) };
             self.pop_at = Vector3 { X: ax, Y: 0.0, Z: 0.0 };
             self.popup.show();
+            self.raise();
             let _ = crate::motion::pop_in(comp, self.popup.root(), self.pop_at, 0.45, 1.025, 40, crate::motion::CC_OPEN_MS);
             for (i, (rb, cy)) in boxes.iter().enumerate() {
                 let _ = crate::motion::pop_in(comp, rb, Vector3 { X: w / 2.0, Y: *cy, Z: 0.0 }, 0.7, 1.04, 80 + i as u32 * crate::motion::CC_STAGGER_MS, 360);
             }
         } else {
             self.popup.show();
+            self.raise();
             self.popup.fade_in(comp, !above);
         }
-        nacre_platform::input::begin_dismiss((px, py, px + wi, py + hi), self.target.0 as isize, MENU_CLOSE);
+        if sub_of.is_some() {
+            nacre_platform::input::set_extra_rect(Some((px, py, px + wi, py + hi)));
+        } else {
+            nacre_platform::input::begin_dismiss((px, py, px + wi, py + hi), self.target.0 as isize, MENU_CLOSE);
+        }
         Ok(())
+    }
+
+    fn hide_sub(&self) {
+        let key = self.popup.hwnd.0 as isize;
+        close_sub(key);
+        LIVE.with(|c| {
+            c.borrow_mut().remove(&key);
+        });
+        unsafe {
+            let _ = KillTimer(Some(self.popup.hwnd), T_HIDE);
+        }
+        self.popup.hide();
     }
 
     pub fn raise(&self) {
@@ -494,7 +678,12 @@ impl Menu {
     }
 
     pub fn hide(&self) {
+        let key = self.popup.hwnd.0 as isize;
+        close_sub(key);
         nacre_platform::input::end_dismiss();
+        LIVE.with(|c| {
+            c.borrow_mut().remove(&key);
+        });
         unsafe {
             let _ = KillTimer(Some(self.popup.hwnd), T_HIDE);
         }

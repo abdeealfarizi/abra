@@ -6,8 +6,8 @@ pub struct Rect {
     pub h: f32,
 }
 
-const LAG: f32 = 0.72;
-const NECK: f32 = 1.55;
+const LAG: f32 = 0.70;
+const NECK: f32 = 1.32;
 
 fn smooth(x: f32) -> f32 {
     let x = x.clamp(0.0, 1.0);
@@ -42,7 +42,7 @@ pub fn slice(i: usize, n: usize, tau: f32, win: Rect, icon: Rect) -> ((f32, f32)
     let k = smooth(s * NECK);
     let width = lerp(win.w, icon.w, k).max(1.0);
     let cx = lerp(win.x + win.w / 2.0, icon.x + icon.w / 2.0, k);
-    ((cx - width / 2.0, y), (width / win.w.max(1.0), ((row_h + 1.5) / sh.max(0.001)).max(0.001)))
+    ((cx - width / 2.0, y), (width / win.w.max(1.0), ((row_h + 2.0) / sh.max(0.001)).max(0.001)))
 }
 
 pub fn tau_at(t: f32, restore: bool) -> f32 {

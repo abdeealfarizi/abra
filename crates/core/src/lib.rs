@@ -9,6 +9,7 @@ pub mod i18n;
 pub mod focus;
 pub mod genie;
 pub mod iconplate;
+pub mod inputmethod;
 pub mod preview;
 pub mod qr;
 pub mod quick;

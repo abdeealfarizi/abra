@@ -102,6 +102,16 @@ const SHADOW_PAD: f32 = 36.0;
 
 static NOTCH_HWND: AtomicIsize = AtomicIsize::new(0);
 static BUSY: AtomicBool = AtomicBool::new(false);
+static FX_SUPPRESS_UNTIL: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+pub fn suppress_for(ms: u32) {
+    let until = Instant::now() + std::time::Duration::from_millis(ms as u64);
+    *FX_SUPPRESS_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) = Some(until);
+    let h = NOTCH_HWND.load(Ordering::Relaxed);
+    if h != 0 {
+        timer(HWND(h as *mut _), T_WINCHG, ms + 20);
+    }
+}
 
 pub struct Options {
     pub glass: Option<Tier>,
@@ -235,7 +245,7 @@ pub fn tasks_changed() {
 fn on_windows_changed() {
     let h = NOTCH_HWND.load(Ordering::Relaxed);
     if h != 0 {
-        timer(HWND(h as *mut _), T_WINCHG, 150);
+        timer(HWND(h as *mut _), T_WINCHG, 25);
     }
 }
 
@@ -548,6 +558,8 @@ impl Notch {
                         (false, nacre_core::i18n::Lang::En) => "Disconnected",
                         (true, nacre_core::i18n::Lang::Es) => "Conectado",
                         (false, nacre_core::i18n::Lang::Es) => "Desconectado",
+                        (true, nacre_core::i18n::Lang::Vi) => "Đã kết nối",
+                        (false, nacre_core::i18n::Lang::Vi) => "Đã ngắt kết nối",
                         (true, nacre_core::i18n::Lang::Id) => "Tersambung",
                         (false, nacre_core::i18n::Lang::Id) => "Terputus",
                     };
@@ -1519,6 +1531,7 @@ impl Notch {
         let tr = crate::prefs::tr;
         let items = vec![
             MItem::action(1, tr("Buka"), true),
+            MItem::action(6, tr("Pratinjau"), true),
             MItem::action(2, tr("Tampilkan di folder"), true),
             MItem::action(3, tr("Salin jalur"), true),
             MItem::action(5, tr("Kirim ke HP"), crate::prefs::get().notch_send),
@@ -1540,6 +1553,7 @@ impl Notch {
         let Some(path) = self.shelf.items().get(i).map(|it| it.path.clone()) else { return };
         match id {
             1 => nacre_platform::launch::open(&path),
+            6 => crate::quicklook::open(&self.paint.comp, &path),
             2 => nacre_platform::launch::show("explorer.exe", &format!("/select,\"{path}\"")),
             3 => {
                 let _ = nacre_platform::clipboard::copy_text(&path);
@@ -1887,7 +1901,7 @@ impl Notch {
                     self.dispatch(Event::SelectTab(Tab::ALL[(i + 1) % Tab::ALL.len()]));
                 }
             }
-            Action::TodoAdd | Action::TodoField => {
+            Action::TodoField => {
                 if self.todo_edit.is_none() {
                     self.begin_edit();
                 }
@@ -2326,6 +2340,14 @@ impl Notch {
             revealing: !self.overlap.fullscreen && self.pills.current(self.now_ms()).is_some(),
         };
         let hide = self.off || should_hide(self.vis, &inputs);
+        let suppressed = !self.interacting()
+            && FX_SUPPRESS_UNTIL
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some_and(|u| Instant::now() < u);
+        if suppressed && !hide && !self.shown {
+            return;
+        }
         if let Some(s) = &self.strip {
             s.set_visible(!self.overlap.fullscreen && !self.off);
         }
@@ -2753,6 +2775,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                             nacre_core::i18n::Lang::Id => "Flashdisk".to_string(),
                             nacre_core::i18n::Lang::En => "USB drive".to_string(),
                             nacre_core::i18n::Lang::Es => "Unidad USB".to_string(),
+                            nacre_core::i18n::Lang::Vi => "Ổ USB".to_string(),
                         }
                     } else { label };
                     let state = match (ev == 0x8000, lang) {
@@ -2760,6 +2783,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                         (false, nacre_core::i18n::Lang::En) => "removed",
                         (true, nacre_core::i18n::Lang::Es) => "conectado",
                         (false, nacre_core::i18n::Lang::Es) => "retirado",
+                        (true, nacre_core::i18n::Lang::Vi) => "đã kết nối",
+                        (false, nacre_core::i18n::Lang::Vi) => "đã tháo",
                         (true, nacre_core::i18n::Lang::Id) => "tersambung",
                         (false, nacre_core::i18n::Lang::Id) => "dilepas",
                     };

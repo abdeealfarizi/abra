@@ -56,6 +56,9 @@ pub fn primary() -> Monitor {
 }
 
 pub fn target(screen: Screen) -> Monitor {
+    if screen == Screen::Active {
+        return under_cursor();
+    }
     let l = list();
     display::resolve(screen, &l).unwrap_or(l[0])
 }

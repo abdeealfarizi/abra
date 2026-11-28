@@ -10,7 +10,6 @@ pub const SWITCHER_MOVE_MS: u32 = 90;
 pub const CC_OPEN_MS: u32 = 420;
 pub const CC_CLOSE_MS: u32 = 170;
 pub const CC_STAGGER_MS: u32 = 22;
-pub const MISSION_MS: u32 = 260;
 
 pub fn stage_ms(base: u32) -> u32 {
     (base as u64 * 100 / crate::prefs::get().stage_speed.max(10) as u64).max(40) as u32

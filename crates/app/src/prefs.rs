@@ -165,8 +165,3 @@ pub fn accent_c(a: u8) -> Color {
     let c = accent();
     Color { A: a, R: c[0], G: c[1], B: c[2] }
 }
-
-pub fn fg(a: u8) -> Color {
-    let l = look(Role::Themed);
-    Color { A: a, R: l.fg[0], G: l.fg[1], B: l.fg[2] }
-}

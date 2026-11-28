@@ -55,6 +55,9 @@ fn shell_name(path: &str) -> String {
 }
 
 pub fn friendly(path: &str) -> String {
+    if let Some(w) = super::identity::parse_webapp(path) {
+        return w.name;
+    }
     if let Some((_, title)) = path.split_once('?') {
         return title.trim().to_string();
     }

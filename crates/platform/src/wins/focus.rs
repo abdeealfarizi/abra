@@ -80,7 +80,9 @@ pub fn activate(target: isize, dock: isize) -> bool {
         let is_front = fg == hwnd || GetAncestor(fg, GA_ROOTOWNER) == hwnd;
         if is_front && IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_MINIMIZE);
-            return IsIconic(hwnd).as_bool();
+            let min_ok = IsIconic(hwnd).as_bool();
+            super::tracker::bump();
+            return min_ok;
         }
 
         if !IsWindowVisible(hwnd).as_bool() {
@@ -90,10 +92,12 @@ pub fn activate(target: isize, dock: isize) -> bool {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
         if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
+            super::tracker::bump();
             return true;
         }
         let _ = BringWindowToTop(hwnd);
         if GetForegroundWindow() == hwnd || (SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd) {
+            super::tracker::bump();
             return true;
         }
         let _ = FlashWindow(hwnd, true);
@@ -141,6 +145,9 @@ pub fn force_foreground(target: isize) -> bool {
         }
         if !ok {
             let _ = FlashWindow(hwnd, true);
+        }
+        if ok {
+            super::tracker::bump();
         }
         ok
     }

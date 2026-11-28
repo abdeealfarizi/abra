@@ -1,5 +1,6 @@
 use crate::popup::Popup;
 use crate::prefs::{self, Role, WM_PREFS};
+use crate::traffic;
 use nacre_core::hud::slider;
 use nacre_core::i18n::Lang;
 use nacre_core::settings::{Behavior, Material, Theme};
@@ -16,7 +17,6 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 const WM_MOUSELEAVE: u32 = 0x02A3;
-use windows_core::Interface;
 use windows_numerics::{Vector2, Vector3};
 
 const WM_CLOSE_SELF: u32 = WM_APP + 50;
@@ -24,7 +24,6 @@ const W: f32 = 780.0;
 const H: f32 = 560.0;
 const SIDEBAR_W: f32 = 214.0;
 const CONTENT_X: f32 = SIDEBAR_W + 24.0;
-const CONTENT_W: f32 = W - SIDEBAR_W - 48.0;
 const VIEW_TOP: f32 = 56.0;
 const SIDE_INSET: f32 = 8.0;
 const SIDE_RADIUS: f32 = 18.0;
@@ -94,6 +93,8 @@ enum Action {
     NotchGlow,
     TodoHotkey,
     Close,
+    Minimize,
+    Zoom,
     Takeover,
     Dock(Behavior),
     Notch(Behavior),
@@ -122,7 +123,10 @@ enum Action {
     Anim,
     Refraction,
     DockOn,
+    DockStart,
+    DockApps,
     MenuBarOn,
+    RailInput,
     Clock24,
     BarStyle(u8),
     HotCycle(usize),
@@ -150,6 +154,7 @@ enum Action {
     NotchOn,
     HoverOpen,
     WinShadow,
+    WinTraffic,
     Material(bool, Material),
     Slider(u8, f32, f32),
     MenuLogoPick,
@@ -222,19 +227,24 @@ fn screen_row(part: u8, cur: nacre_core::display::Screen) -> Option<RowDef> {
         return None;
     }
     let names = ["Layar 1", "Layar 2", "Layar 3", "Layar 4"];
-    let mut opts = vec![(prefs::tr("Utama"), Action::Screen(part, Screen::Primary))];
+    let mut opts = vec![
+        (prefs::tr("Utama"), Action::Screen(part, Screen::Primary)),
+        (prefs::tr("Ikuti kursor"), Action::Screen(part, Screen::Active)),
+    ];
+    if part == 1 {
+        opts.push((prefs::tr("Semua layar"), Action::Screen(part, Screen::All)));
+    }
+    let nth_offset = if part == 1 { 2 } else { 1 };
     for (i, n) in names.iter().enumerate().take(count.max(1)) {
         opts.push((prefs::tr(n), Action::Screen(part, Screen::Nth(i as u8 + 1))));
     }
     let sel = match cur {
         Screen::Primary => 0,
-        Screen::Nth(n) => (n as usize).min(opts.len() - 1),
+        Screen::Active => 1,
+        Screen::All => if part == 1 { 2 } else { 0 },
+        Screen::Nth(n) => (n as usize + nth_offset).min(opts.len() - 1),
     };
     Some(RowDef::Seg(prefs::tr("Tampilkan di"), opts, sel))
-}
-
-fn close_button(d: f32) -> (f32, f32, f32) {
-    (W * d - 44.0 * d, 13.0 * d, 28.0 * d)
 }
 
 fn user_name() -> String {
@@ -269,6 +279,9 @@ struct Win {
     edit_buf: String,
     frame: Option<windows::UI::Composition::SpriteVisual>,
     frame_key: (i32, i32, bool),
+    active: bool,
+    tl_hover: bool,
+    zoomed: bool,
 }
 
 thread_local! {
@@ -279,9 +292,14 @@ pub fn open(comp: &Compositor) {
     let existing = WIN.with(|w| w.borrow().as_ref().map(|b| b.popup.hwnd));
     if let Some(h) = existing {
         unsafe {
+            let _ = ShowWindow(h, SW_SHOW);
             let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             let _ = SetForegroundWindow(h);
         }
+        with_win(|w| {
+            w.active = true;
+            w.render();
+        });
         return;
     }
     match create(comp) {
@@ -292,7 +310,7 @@ pub fn open(comp: &Compositor) {
 
 fn create(comp: &Compositor) -> windows_core::Result<()> {
     let glass = side_glass(prefs::glass((10.0, 10.0), SIDE_RADIUS, Role::Themed));
-    let mut popup = Popup::new(comp, w!("AbraSettings"), Some(proc), WINDOW_EX_STYLE(0), glass)?;
+    let popup = Popup::new(comp, w!("AbraSettings"), Some(proc), WINDOW_EX_STYLE(0), glass)?;
     let mon = nacre_platform::monitors::under_cursor();
     let dpi = mon.scale();
     let gfx = Gfx::shared(comp)?;
@@ -302,7 +320,7 @@ fn create(comp: &Compositor) -> windows_core::Result<()> {
     };
     let _ = popup.panel.set_tier(tier);
     let _ = popup.panel.set_radius(24.0 * dpi);
-    let mut win = Box::new(Win { popup, gfx, comp: comp.clone(), dpi, size: (0.0, 0.0), regions: vec![], cache: HashMap::new(), dragging: None, side: vec![], side_hover: None, side_scroll: 0.0, side_view: (0.0, 0.0), side_bar: None, side_drag: None, press: None, tab: 0, scroll: 0.0, content_h: 0.0, history: vec![0], hpos: 0, search: String::new(), search_focus: false, thumbs: HashMap::new(), edit: None, edit_buf: String::new(), frame: None, frame_key: (0, 0, false) });
+    let mut win = Box::new(Win { popup, gfx, comp: comp.clone(), dpi, size: (0.0, 0.0), regions: vec![], cache: HashMap::new(), dragging: None, side: vec![], side_hover: None, side_scroll: 0.0, side_view: (0.0, 0.0), side_bar: None, side_drag: None, press: None, tab: 0, scroll: 0.0, content_h: 0.0, history: vec![0], hpos: 0, search: String::new(), search_focus: false, thumbs: HashMap::new(), edit: None, edit_buf: String::new(), frame: None, frame_key: (0, 0, false), active: true, tl_hover: false, zoomed: false });
     if let Some(t) = std::env::var("NACRE_TEST_PAGE").ok().and_then(|v| v.parse::<u8>().ok()) {
         win.tab = t;
         win.history = vec![t];
@@ -377,7 +395,7 @@ impl Win {
             let v = self.comp.CreateSpriteVisual()?;
             v.SetBrush(&b)?;
             v.SetSize(Vector2 { X: w as f32, Y: h as f32 })?;
-            v.SetOffset(Vector3 { X: left, Y: y, Z: 0.0 })?;
+            v.SetOffset(Vector3 { X: left.round(), Y: y.round(), Z: 0.0 })?;
             v.SetOpacity(alpha)?;
             parent.Children()?.InsertAtTop(&v)
         };
@@ -447,7 +465,7 @@ impl Win {
             let v = self.comp.CreateSpriteVisual()?;
             v.SetBrush(&br)?;
             v.SetSize(Vector2 { X: w as f32, Y: h as f32 })?;
-            v.SetOffset(Vector3 { X: cx - w as f32 / 2.0, Y: cy - h as f32 / 2.0, Z: 0.0 })?;
+            v.SetOffset(Vector3 { X: (cx - w as f32 / 2.0).round(), Y: (cy - h as f32 / 2.0).round(), Z: 0.0 })?;
             parent.Children()?.InsertAtTop(&v)
         };
         let _ = make();
@@ -558,9 +576,19 @@ impl Win {
         }
     }
 
+    fn win_wh(&self) -> (f32, f32) {
+        if !self.zoomed {
+            return (W, H);
+        }
+        let (sw, sh) = nacre_platform::monitors::under_cursor().area.size();
+        let d = self.dpi.max(0.5);
+        ((sw as f32 / d - 48.0).clamp(W, 960.0), (sh as f32 / d - 72.0).clamp(H, 720.0))
+    }
+
     fn card(&mut self, c: &ContainerVisual, y0: f32, rows: &[RowDef], look: &nacre_core::settings::Look) -> f32 {
         let d = self.dpi;
-        let (x0, cw) = (CONTENT_X * d, CONTENT_W * d);
+        let (win_w, _) = self.win_wh();
+        let (x0, cw) = (CONTENT_X * d, (win_w - SIDEBAR_W - 48.0) * d);
         let total: f32 = rows.iter().map(|r| Self::row_height(r) * d).sum();
         self.rect(c, x0, y0, cw, total, 12.0 * d, col(look.fg, if look.dark { 22 } else { 16 }));
         let mut y = y0;
@@ -886,7 +914,7 @@ impl Win {
         };
         match page {
             0 => vec![
-                (None, vec![RowDef::Seg(prefs::tr("Bahasa"), vec![("Indonesia", Action::Lang(Lang::Id)), ("English", Action::Lang(Lang::En)), ("Español", Action::Lang(Lang::Es))], match s.lang { Lang::Id => 0, Lang::En => 1, Lang::Es => 2 })]),
+                (None, vec![RowDef::Seg(prefs::tr("Bahasa"), vec![("Indonesia", Action::Lang(Lang::Id)), ("English", Action::Lang(Lang::En)), ("Español", Action::Lang(Lang::Es)), ("Tiếng Việt", Action::Lang(Lang::Vi))], match s.lang { Lang::Id => 0, Lang::En => 1, Lang::Es => 2, Lang::Vi => 3 })]),
                 (
                     Some(prefs::tr("Sistem")),
                     vec![
@@ -902,6 +930,7 @@ impl Win {
                     vec![
                         RowDef::Toggle(prefs::tr("Animasi jendela (minimize, tutup, buka)"), s.anim, Action::Anim),
                         RowDef::Toggle(prefs::tr("Bayangan halus di bawah jendela aktif"), s.win_shadow, Action::WinShadow),
+                        RowDef::Toggle(prefs::tr("Tombol traffic lights (jendela aktif)"), s.win_traffic, Action::WinTraffic),
                     ],
                 ),
                 (
@@ -912,6 +941,7 @@ impl Win {
                             Lang::Id => concat!("Versi ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
                             Lang::En => concat!("Version ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
                             Lang::Es => concat!("Versión ", env!("CARGO_PKG_VERSION"), " \u{00B7} Acceso anticipado"),
+                            Lang::Vi => concat!("Phiên bản ", env!("CARGO_PKG_VERSION"), " \u{00B7} Early Access"),
                         };
                         let button = match crate::updater::phase() {
                             Phase::Idle => prefs::tr("Periksa pembaruan").to_string(),
@@ -936,6 +966,8 @@ impl Win {
                     None,
                     vec![
                         RowDef::Toggle(prefs::tr("Aktifkan Deck"), s.dock_enabled, Action::DockOn),
+                        RowDef::Toggle(prefs::tr("Tampilkan tombol Mulai"), s.dock_start, Action::DockStart),
+                        RowDef::Toggle(prefs::tr("Tampilkan tombol Apps"), s.dock_apps, Action::DockApps),
                         RowDef::Seg(prefs::tr("Perilaku"), behaviors(true), beh_idx(s.dock)),
                         RowDef::Seg(prefs::tr("Efek minimize"), vec![(prefs::tr("Funnel"), Action::MinEffect(0)), (prefs::tr("Skala"), Action::MinEffect(1))], s.min_effect as usize),
                         RowDef::Toggle(prefs::tr("Ikon seragam (squircle)"), s.dock_plates, Action::DockPlates),
@@ -1043,6 +1075,7 @@ impl Win {
                             cur,
                         ),
                         RowDef::Toggle(prefs::tr("Jam 24 jam"), s.clock_24h, Action::Clock24),
+                        RowDef::Toggle(prefs::tr("Indikator bahasa"), s.rail_input, Action::RailInput),
                         RowDef::Seg(
                             prefs::tr("Persentase baterai"),
                             vec![(prefs::tr("Di dalam"), Action::BatteryPct(1)), (prefs::tr("Di luar"), Action::BatteryPct(2)), (prefs::tr("Sembunyi"), Action::BatteryPct(0))],
@@ -1255,15 +1288,18 @@ impl Win {
         let look = prefs::look(Role::Themed);
         let c = &content;
 
-        for (i, rgb) in [[255u8, 95, 87], [254, 188, 46], [40, 200, 64]].iter().enumerate() {
-            let (cx, cy) = ((26.0 + i as f32 * 20.0) * d, 27.0 * d);
-            self.rect(c, cx - 6.0 * d, cy - 6.0 * d, 12.0 * d, 12.0 * d, 6.0 * d, col(*rgb, 255));
+        let tl = traffic::Layout::tahoe(d);
+        traffic::render(
+            &self.comp,
+            c,
+            tl,
+            traffic::Opts { active: self.active, hover: self.tl_hover, dark: look.dark, can_min: true, can_zoom: true },
+            d,
+        );
+        for (i, act) in [(0, Action::Close), (1, Action::Minimize), (2, Action::Zoom)] {
+            let (cx, cy) = tl.center(i);
+            self.region_fixed(cx - 10.0 * d, cy - 10.0 * d, 20.0 * d, 20.0 * d, act);
         }
-        self.region_fixed(18.0 * d, 17.0 * d, 20.0 * d, 20.0 * d, Action::Close);
-        let (bx, by, bs) = close_button(d);
-        self.rect(c, bx, by, bs, bs, bs / 2.0, col(look.fg, 22));
-        self.glyph_icon(c, "\u{E711}", bx + bs / 2.0, by + bs / 2.0, 11.0, look.fg);
-        self.region_fixed(bx, by, bs, bs, Action::Close);
 
         let (fx, fy, fw, fh) = (16.0 * d, 48.0 * d, (SIDEBAR_W - 32.0) * d, 30.0 * d);
         self.rect(c, fx, fy, fw, fh, 9.0 * d, col(look.fg, if self.search_focus { 36 } else { 22 }));
@@ -1295,9 +1331,10 @@ impl Win {
             (prefs::tr("Quick Search"), "\u{E721}", [255, 149, 10], 7),
             (prefs::tr("Widget"), "\u{E737}", [0, 122, 255], 8),
         ];
+        let (win_w, win_h) = self.win_wh();
         let mut sy = 140.0 * d;
         self.side.clear();
-        let (view_top, view_bot) = (134.0 * d, (H - 96.0) * d);
+        let (view_top, view_bot) = (134.0 * d, (win_h - 96.0) * d);
         let side_body = match (self.comp.CreateContainerVisual(), self.comp.CreateContainerVisual()) {
             (Ok(v), Ok(b)) => {
                 let _ = v.SetOffset(Vector3 { X: 0.0, Y: view_top, Z: 0.0 });
@@ -1357,7 +1394,7 @@ impl Win {
             self.side_bar = Some(((bx - 6.0 * d, track_top, bw + 12.0 * d, track_h), th));
         }
         let (kx, kw) = (20.0 * d, (SIDEBAR_W - 40.0) * d);
-        let ky = (H - 84.0) * d;
+        let ky = (win_h - 84.0) * d;
         self.text(c, prefs::tr("Dibuat oleh kreativa.dev"), kx + kw / 2.0, ky, 11.0, 500, look.fg, 0.55, 1);
         let (kby, kbh) = (ky + 22.0 * d, 32.0 * d);
         self.rect(c, kx, kby, kw, kbh, kbh / 2.0, col([255, 159, 10], 255));
@@ -1381,9 +1418,9 @@ impl Win {
             _ => None,
         };
         let Some((viewport, body)) = view else { return };
-        let (vt, vh) = (VIEW_TOP * d, (H - VIEW_TOP - 10.0) * d);
+        let (vt, vh) = (VIEW_TOP * d, (win_h - VIEW_TOP - 10.0) * d);
         let _ = viewport.SetOffset(Vector3 { X: 0.0, Y: vt, Z: 0.0 });
-        let _ = viewport.SetSize(Vector2 { X: W * d, Y: vh });
+        let _ = viewport.SetSize(Vector2 { X: win_w * d, Y: vh });
         if let Ok(clip) = self.comp.CreateInsetClip() {
             let _ = clip.SetLeftInset(0.0);
             let _ = clip.SetRightInset(0.0);
@@ -1412,26 +1449,30 @@ impl Win {
             self.scroll = max_scroll;
             let _ = body.SetOffset(Vector3 { X: 0.0, Y: -self.scroll, Z: 0.0 });
         }
-        self.size = (W * d, H * d);
+        self.size = (win_w * d, win_h * d);
         let (x, yy, ww, hh) = self.popup.rect;
-        let (nw, nh) = ((W * d) as i32, (H * d) as i32);
+        let (nw, nh) = ((win_w * d) as i32, (win_h * d) as i32);
         if (nw, nh) != (ww, hh) {
-            let _ = self.popup.set_rect(x, yy, nw, nh);
+            let mon = nacre_platform::monitors::under_cursor().area;
+            let nx = x.clamp(mon.x + 8, (mon.right() - nw - 8).max(mon.x));
+            let ny = yy.clamp(mon.y + 8, (mon.bottom() - nh - 8).max(mon.y));
+            let _ = self.popup.set_rect(nx, ny, nw, nh);
         }
         self.frame();
     }
 
     fn frame(&mut self) {
         let d = self.dpi;
-        let (w, h) = ((W * d) as i32, (H * d) as i32);
-        let (hx, hy, hw, hh) = (SIDE_INSET * d, SIDE_INSET * d, (SIDEBAR_W - 2.0 * SIDE_INSET) * d, (H - 2.0 * SIDE_INSET) * d);
+        let (win_w, win_h) = self.win_wh();
+        let (w, h) = ((win_w * d) as i32, (win_h * d) as i32);
+        let (hx, hy, hw, hh) = (SIDE_INSET * d, SIDE_INSET * d, (SIDEBAR_W - 2.0 * SIDE_INSET) * d, (win_h - 2.0 * SIDE_INSET) * d);
         let _ = self.popup.panel.set_rect(hx, hy, hw, hh);
         let _ = self.popup.panel.set_radius(SIDE_RADIUS * d);
         let dark = prefs::look(Role::Themed).dark;
         if self.frame.is_some() && self.frame_key == (w, h, dark) {
             return;
         }
-        let data = frame_pixels(w, h, 24.0 * d, (hx, hy, hw, hh), SIDE_RADIUS * d, dark);
+        let data = frame_pixels(w, h, 26.0 * d, (hx, hy, hw, hh), SIDE_RADIUS * d, dark);
         let go = || -> windows_core::Result<windows::UI::Composition::SpriteVisual> {
             let surf = self.gfx.surface_from_bgra(w as u32, h as u32, &data)?;
             let br = self.comp.CreateSurfaceBrushWithSurface(&surf)?;
@@ -1473,7 +1514,8 @@ impl Win {
 
     fn hit(&self, x: f32, y: f32) -> Option<Action> {
         let d = self.dpi;
-        let (vt, vb) = (VIEW_TOP * d, (H - 10.0) * d);
+        let (_, win_h) = self.win_wh();
+        let (vt, vb) = (VIEW_TOP * d, (win_h - 10.0) * d);
         self.regions
             .iter()
             .rev()
@@ -1541,18 +1583,31 @@ fn with_win<R>(f: impl FnOnce(&mut Win) -> R) -> Option<R> {
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_ACTIVATE => {
+            let on = (wp.0 & 0xFFFF) != 0;
+            with_win(|w| {
+                if w.active != on {
+                    w.active = on;
+                    w.render();
+                }
+            });
+            LRESULT(0)
+        }
         WM_NCHITTEST => {
             let mut r = windows::Win32::Foundation::RECT::default();
             let _ = GetWindowRect(hwnd, &mut r);
             let (px, py) = ((lp.0 as i16) as i32, ((lp.0 >> 16) as i16) as i32);
             let drag = with_win(|w| {
                 let d = w.dpi;
-                let (bx, by, bs) = close_button(d);
                 let (lx, ly) = ((px - r.left) as f32, (py - r.top) as f32);
-                if lx >= bx && lx < bx + bs && ly >= by && ly < by + bs {
+                if ly >= VIEW_TOP * d {
                     return false;
                 }
-                py - r.top < (VIEW_TOP * d) as i32 && px - r.left > ((CONTENT_X + 70.0) * d) as i32
+                if traffic::in_cluster(traffic::Layout::tahoe(d), lx, ly) {
+                    return false;
+                }
+                let (bx, by, bw, bh) = (CONTENT_X * d, 11.0 * d, 64.0 * d, 28.0 * d);
+                !(lx >= bx && lx <= bx + bw && ly >= by && ly <= by + bh)
             })
             .unwrap_or(false);
             LRESULT(if drag { HTCAPTION } else { HTCLIENT } as isize)
@@ -1561,7 +1616,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             let delta = ((wp.0 >> 16) as i16) as f32;
             with_win(|w| {
                 let d = w.dpi;
-                let vh = (H - VIEW_TOP - 10.0) * d;
+                let vh = (w.win_wh().1 - VIEW_TOP - 10.0) * d;
                 let mut p = windows::Win32::Foundation::POINT::default();
                 let _ = GetCursorPos(&mut p);
                 if ((p.x - w.popup.rect.0) as f32) < SIDEBAR_W * d {
@@ -1634,14 +1689,26 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 }
                 let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
                 let _ = TrackMouseEvent(&mut t);
+                let (_, win_h) = w.win_wh();
                 let (top, s) = (w.side_view.0, w.side_scroll);
-                let hit = if y < top || y > (H - 96.0) * w.dpi { None } else { w.side.iter().find(|(_, r, _)| x >= r.0 && x < r.0 + r.2 && y + s >= r.1 && y + s < r.1 + r.3).map(|e| e.0) };
+                let hit = if y < top || y > (win_h - 96.0) * w.dpi { None } else { w.side.iter().find(|(_, r, _)| x >= r.0 && x < r.0 + r.2 && y + s >= r.1 && y + s < r.1 + r.3).map(|e| e.0) };
                 w.hover_side(hit);
+                let tl = traffic::in_cluster(traffic::Layout::tahoe(w.dpi), x, y);
+                if tl != w.tl_hover {
+                    w.tl_hover = tl;
+                    w.render();
+                }
             });
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
-            with_win(|w| w.hover_side(None));
+            with_win(|w| {
+                w.hover_side(None);
+                if w.tl_hover {
+                    w.tl_hover = false;
+                    w.render();
+                }
+            });
             LRESULT(0)
         }
         WM_CHAR => {
@@ -1838,6 +1905,15 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 Some(Action::Close) => {
                     let _ = PostMessageW(Some(hwnd), WM_CLOSE_SELF, WPARAM(0), LPARAM(0));
                 }
+                Some(Action::Minimize) => {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+                Some(Action::Zoom) => {
+                    with_win(|w| {
+                        w.zoomed = !w.zoomed;
+                        w.render();
+                    });
+                }
                 Some(Action::Takeover) => prefs::update(|s| s.takeover = !s.takeover),
                 Some(Action::Dock(b)) => prefs::update(|s| s.dock = b),
                 Some(Action::Notch(b)) => prefs::update(|s| s.notch = b),
@@ -1881,8 +1957,10 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 Some(Action::Theme(t)) => prefs::update(|s| s.theme = t),
                 Some(Action::Lang(l)) => prefs::update(|s| s.lang = l),
                 Some(Action::WinShadow) => prefs::update(|s| s.win_shadow = !s.win_shadow),
+                Some(Action::WinTraffic) => prefs::update(|s| s.win_traffic = !s.win_traffic),
                 Some(Action::HoverOpen) => prefs::update(|s| s.notch_hover_open = !s.notch_hover_open),
                 Some(Action::MenuBarOn) => prefs::update(|s| s.menubar = !s.menubar),
+                Some(Action::RailInput) => prefs::update(|s| s.rail_input = !s.rail_input),
                 Some(Action::HotCycle(i)) => prefs::update(|s| s.hot[i] = s.hot[i].next()),
                 Some(Action::StageOn) => prefs::update(|s| s.stage = !s.stage),
                 Some(Action::SwitcherOn) => prefs::update(|s| s.switcher = !s.switcher),
@@ -1937,6 +2015,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 }),
                 Some(Action::Clock24) => prefs::update(|s| s.clock_24h = !s.clock_24h),
                 Some(Action::DockOn) => prefs::update(|s| s.dock_enabled = !s.dock_enabled),
+                Some(Action::DockStart) => prefs::update(|s| s.dock_start = !s.dock_start),
+                Some(Action::DockApps) => prefs::update(|s| s.dock_apps = !s.dock_apps),
                 Some(Action::NotchOn) => prefs::update(|s| s.notch_enabled = !s.notch_enabled),
                 Some(Action::Refraction) => prefs::update(|s| s.refraction = !s.refraction),
                 Some(Action::Anim) => prefs::update(|s| s.anim = !s.anim),

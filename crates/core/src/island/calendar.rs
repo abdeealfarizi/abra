@@ -62,11 +62,13 @@ pub fn month_short(m: u32, lang: crate::i18n::Lang) -> &'static str {
     const ID: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
     const EN: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const ES: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+    const VI: [&str; 12] = ["Th1", "Th2", "Th3", "Th4", "Th5", "Th6", "Th7", "Th8", "Th9", "Th10", "Th11", "Th12"];
     let i = (m.clamp(1, 12) - 1) as usize;
     match lang {
         crate::i18n::Lang::Id => ID[i],
         crate::i18n::Lang::En => EN[i],
         crate::i18n::Lang::Es => ES[i],
+        crate::i18n::Lang::Vi => VI[i],
     }
 }
 
@@ -74,11 +76,13 @@ pub fn weekday_short(wd: u32, lang: crate::i18n::Lang) -> &'static str {
     const ID: [&str; 7] = ["MIN", "SEN", "SEL", "RAB", "KAM", "JUM", "SAB"];
     const EN: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
     const ES: [&str; 7] = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
+    const VI: [&str; 7] = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
     let i = (wd % 7) as usize;
     match lang {
         crate::i18n::Lang::Id => ID[i],
         crate::i18n::Lang::En => EN[i],
         crate::i18n::Lang::Es => ES[i],
+        crate::i18n::Lang::Vi => VI[i],
     }
 }
 
@@ -90,6 +94,8 @@ pub fn weekday_labels(lang: crate::i18n::Lang, monday_first: bool) -> [&'static 
         (crate::i18n::Lang::En, false) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
         (crate::i18n::Lang::Es, true) => ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"],
         (crate::i18n::Lang::Es, false) => ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"],
+        (crate::i18n::Lang::Vi, true) => ["T2", "T3", "T4", "T5", "T6", "T7", "CN"],
+        (crate::i18n::Lang::Vi, false) => ["CN", "T2", "T3", "T4", "T5", "T6", "T7"],
     }
 }
 

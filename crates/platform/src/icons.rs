@@ -82,6 +82,24 @@ pub fn is_themed(path: &str) -> bool {
 }
 
 pub fn load(path: &str, px: i32) -> Option<Bitmap> {
+    if let Some(w) = crate::wins::identity::parse_webapp(path) {
+        if let Some(img) = override_for(path) {
+            if let Some(b) = crate::wic::decode_file_fit(&img, px as u32) {
+                return Some(b);
+            }
+        }
+        let icon_file = w.icon.split(',').next().unwrap_or("").trim().trim_matches('"');
+        if !icon_file.is_empty() {
+            if let Some(b) = crate::wic::decode_file_fit(icon_file, px as u32).or_else(|| load_shell(icon_file, px)) {
+                return Some(b);
+            }
+        }
+        let exe = split_exe(&w.cmd);
+        if !exe.is_empty() {
+            return load_shell(&exe, px);
+        }
+        return None;
+    }
     if let Some(img) = override_for(path) {
         if let Some(b) = crate::wic::decode_file_fit(&img, px as u32) {
             return Some(b);
@@ -93,6 +111,15 @@ pub fn load(path: &str, px: i32) -> Option<Bitmap> {
         }
     }
     load_shell(path, px)
+}
+
+fn split_exe(cmd: &str) -> String {
+    let t = cmd.trim();
+    if let Some(rest) = t.strip_prefix('"') {
+        rest.split('"').next().unwrap_or("").to_string()
+    } else {
+        t.split_whitespace().next().unwrap_or("").to_string()
+    }
 }
 
 pub fn thumbnail(path: &str, px: i32) -> Option<Bitmap> {

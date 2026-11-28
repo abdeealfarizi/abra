@@ -1,14 +1,12 @@
 use crate::motion;
 use crate::popup::Popup;
 use crate::services::{self, WM_BRIGHT, WM_VOLUME};
-use crate::strip::Strip;
 use nacre_core::hud::slider;
 use nacre_core::hud::timeline::Timeline;
-use nacre_platform::icons::Bitmap;
-use nacre_platform::text::{self, Style, ICON_FACE};
+use nacre_platform::text::{self, Style};
 use nacre_platform::{audio, brightness, log, osd, sys};
 use nacre_ui::gfx::Gfx;
-use nacre_ui::glass::{GlassParams, Tier};
+use nacre_ui::glass::Tier;
 use nacre_ui::host::Host;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -107,13 +105,10 @@ struct Bar {
     title: SpriteVisual,
     title_text: String,
     fill: SpriteVisual,
-    icon: SpriteVisual,
-    icon2: SpriteVisual,
     time: Timeline,
     shown: bool,
     edge: bool,
     over: bool,
-    strip: Option<Strip>,
 }
 
 pub struct Hud {
@@ -122,7 +117,6 @@ pub struct Hud {
     gfx: Gfx,
     t0: Instant,
     dpi: f32,
-    screen: (i32, i32),
     bars: Vec<Bar>,
     dragging: Option<usize>,
     last_glyph: [String; 2],
@@ -163,16 +157,6 @@ unsafe extern "system" fn bar_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRE
 }
 
 static CTL: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
-
-fn glyph_for(kind: Kind, level: f32, muted: bool) -> &'static str {
-    match kind {
-        Kind::Brightness => "\u{E706}",
-        Kind::Volume if muted || level <= 0.0 => "\u{E74F}",
-        Kind::Volume if level < 0.34 => "\u{E993}",
-        Kind::Volume if level < 0.67 => "\u{E994}",
-        Kind::Volume => "\u{E995}",
-    }
-}
 
 impl Hud {
     pub fn create(host: &Host, glass: Option<Tier>) -> windows_core::Result<HWND> {
@@ -266,15 +250,7 @@ impl Hud {
                 let icon2 = mk(sr, bw as f32 - 16.0 * dpi - isz as f32)?;
                 popup.content.Children()?.InsertAtTop(&icon)?;
                 popup.content.Children()?.InsertAtTop(&icon2)?;
-                let (enter, leave) = if i == 0 { (STRIP_L_ENTER, STRIP_L_LEAVE) } else { (STRIP_R_ENTER, STRIP_R_LEAVE) };
-                let _ = (enter, leave);
-                let strip: Option<Strip> = None;
-                if let Some(s) = &strip {
-                    let sx = if i == 0 { 0 } else { screen.0 - 2 };
-                    s.place(sx, (screen.1 - bh) / 2, 2, bh);
-                    s.set_visible(true);
-                }
-                bars.push(Bar { kind, popup, title: tv, title_text: String::new(), fill, icon, icon2, time: Timeline::default(), shown: false, edge: false, over: false, strip });
+                bars.push(Bar { kind, popup, title: tv, title_text: String::new(), fill, time: Timeline::default(), shown: false, edge: false, over: false });
             }
             let mut hud = Box::new(Hud {
                 hwnd: ctl,
@@ -282,7 +258,6 @@ impl Hud {
                 gfx,
                 t0: Instant::now(),
                 dpi,
-                screen,
                 bars,
                 dragging: None,
                 last_glyph: [String::new(), String::new()],
@@ -565,33 +540,4 @@ impl Hud {
             _ => {}
         }
     }
-}
-
-fn center(b: &Bitmap) -> Option<Bitmap> {
-    let (w, h) = (b.w as usize, b.h as usize);
-    let (mut minx, mut miny, mut maxx, mut maxy) = (w, h, 0usize, 0usize);
-    for y in 0..h {
-        for x in 0..w {
-            if b.bgra[(y * w + x) * 4 + 3] > 8 {
-                minx = minx.min(x);
-                maxx = maxx.max(x);
-                miny = miny.min(y);
-                maxy = maxy.max(y);
-            }
-        }
-    }
-    if minx > maxx || miny > maxy {
-        return None;
-    }
-    let (gw, gh) = (maxx - minx + 1, maxy - miny + 1);
-    let mut out = vec![0u8; w * h * 4];
-    let (ox, oy) = ((w - gw) / 2, (h - gh) / 2);
-    for y in 0..gh {
-        for x in 0..gw {
-            let s = ((miny + y) * w + minx + x) * 4;
-            let d = ((oy + y) * w + ox + x) * 4;
-            out[d..d + 4].copy_from_slice(&b.bgra[s..s + 4]);
-        }
-    }
-    Some(Bitmap { w: b.w, h: b.h, bgra: out })
 }

@@ -237,7 +237,7 @@ pub fn encode(text: &str) -> Option<Matrix> {
     })?;
     let cap = data_capacity(version);
     let mut bits: Vec<bool> = Vec::with_capacity(cap * 8);
-    let mut push = |v: u32, n: usize, bits: &mut Vec<bool>| {
+    let push = |v: u32, n: usize, bits: &mut Vec<bool>| {
         for i in (0..n).rev() {
             bits.push((v >> i) & 1 != 0);
         }

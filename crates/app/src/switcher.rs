@@ -43,7 +43,7 @@ struct Ui {
 }
 
 struct Ctl {
-    hwnd: HWND,
+    _hwnd: HWND,
     comp: Compositor,
     gfx: Option<Gfx>,
     ui: Option<Ui>,
@@ -64,7 +64,7 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(ctl_proc), hInstance: hi, lpszClassName: class, ..Default::default() });
         let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("abra-switcher"), WS_POPUP, 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(hi), None)?;
         TARGET.store(hwnd.0 as isize, Ordering::Relaxed);
-        CTL.with(|c| *c.borrow_mut() = Some(Ctl { hwnd, comp: comp.clone(), gfx: None, ui: None }));
+        CTL.with(|c| *c.borrow_mut() = Some(Ctl { _hwnd: hwnd, comp: comp.clone(), gfx: None, ui: None }));
         prefs::listen(hwnd);
     }
     sync();

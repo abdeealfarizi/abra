@@ -11,11 +11,13 @@ use std::collections::HashMap;
 use std::time::Instant;
 use windows::core::w;
 use windows::UI::Color;
-use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor, ContainerVisual, SpriteVisual};
+use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor, SpriteVisual};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, VK_ESCAPE, VK_UP};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, VK_ESCAPE, VK_UP,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows_numerics::{Vector2, Vector3};
 
@@ -29,6 +31,12 @@ struct Tile {
     from: Rect,
     to: Rect,
     title: String,
+}
+
+struct Drag {
+    idx: usize,
+    start: (f32, f32),
+    active: bool,
 }
 
 struct Mc {
@@ -46,6 +54,9 @@ struct Mc {
     plus: Option<Rect>,
     cur_desk: usize,
     text_cache: HashMap<String, (CompositionDrawingSurface, i32, i32)>,
+    drag: Option<Drag>,
+    desk_hover: Option<usize>,
+    desk_ring: Option<SpriteVisual>,
 }
 
 struct Ctl {
@@ -174,7 +185,7 @@ fn create(comp: &Compositor) -> windows_core::Result<Option<Box<Mc>>> {
     highlight.SetOpacity(0.0)?;
     popup.content.Children()?.InsertAtTop(&highlight)?;
     let gfx = Gfx::shared(comp)?;
-    Ok(Some(Box::new(Mc { popup, gfx, comp: comp.clone(), dpi, tiles, t0: Instant::now(), done: false, hover: None, highlight, label: None, desks: vec![], plus: None, cur_desk: 0, text_cache: HashMap::new() })))
+    Ok(Some(Box::new(Mc { popup, gfx, comp: comp.clone(), dpi, tiles, t0: Instant::now(), done: false, hover: None, highlight, label: None, desks: vec![], plus: None, cur_desk: 0, text_cache: HashMap::new(), drag: None, desk_hover: None, desk_ring: None })))
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -272,10 +283,47 @@ impl Mc {
             let _ = self.put_text(name, (13.0 * d) as i32, 600, r.x, r.y + r.h / 2.0 - 8.0 * d, r.w, 1.0);
             self.desks.push((r, i));
         }
-        let pr = Rect { x: x0 + n * (cw + gap), y, w: plus_w, h: ch };
+        let r = Rect { x: x0 + n * (cw + gap), y, w: plus_w, h: ch };
+        let pr = r;
         self.card(pr, 12.0 * d, Color { A: 70, R: 255, G: 255, B: 255 });
         let _ = self.put_text("+", (28.0 * d) as i32, 300, pr.x, pr.y + pr.h / 2.0 - 18.0 * d, pr.w, 1.0);
         self.plus = Some(pr);
+    }
+
+    fn set_desk_hover(&mut self, idx: Option<usize>) {
+        if idx == self.desk_hover {
+            return;
+        }
+        self.desk_hover = idx;
+        if let Some(old) = self.desk_ring.take() {
+            if let Ok(k) = self.popup.content.Children() {
+                let _ = k.Remove(&old);
+            }
+        }
+        let Some(i) = idx else { return };
+        let Some(&(r, _)) = self.desks.iter().find(|(_, di)| *di == i) else { return };
+        let d = self.dpi;
+        let go = || -> windows_core::Result<SpriteVisual> {
+            let v = self.comp.CreateSpriteVisual()?;
+            v.SetSize(Vector2 { X: r.w + 8.0 * d, Y: r.h + 8.0 * d })?;
+            v.SetOffset(Vector3 { X: r.x - 4.0 * d, Y: r.y - 4.0 * d, Z: 0.0 })?;
+            v.SetBrush(&self.comp.CreateColorBrushWithColor(Color { A: 120, R: 255, G: 255, B: 255 })?)?;
+            let g = self.comp.CreateRoundedRectangleGeometry()?;
+            g.SetSize(Vector2 { X: r.w + 8.0 * d, Y: r.h + 8.0 * d })?;
+            g.SetCornerRadius(Vector2 { X: 14.0 * d, Y: 14.0 * d })?;
+            let clip = self.comp.CreateGeometricClip()?;
+            clip.SetGeometry(&g)?;
+            v.SetClip(&clip)?;
+            self.popup.content.Children()?.InsertAtTop(&v)?;
+            Ok(v)
+        };
+        self.desk_ring = go().ok();
+    }
+
+    fn place_tile(&self, idx: usize, r: Rect, alpha: u8) {
+        if let Some(t) = self.tiles.get(idx) {
+            thumbnail::place(t.handle, (r.x.round() as i32, r.y.round() as i32, (r.x + r.w).round() as i32, (r.y + r.h).round() as i32), alpha);
+        }
     }
 
     fn tile_at(&self, x: f32, y: f32) -> Option<usize> {
@@ -343,9 +391,35 @@ unsafe extern "system" fn mc_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_mc(|m| m.step());
             LRESULT(0)
         }
+        WM_LBUTTONDOWN => {
+            let (x, y) = ((lp.0 as i16) as f32, ((lp.0 >> 16) as i16) as f32);
+            with_mc(|m| {
+                if m.done {
+                    if let Some(idx) = m.tile_at(x, y) {
+                        m.drag = Some(Drag { idx, start: (x, y), active: false });
+                        let _ = SetCapture(hwnd);
+                    }
+                }
+            });
+            LRESULT(0)
+        }
         WM_MOUSEMOVE => {
             let (x, y) = ((lp.0 as i16) as f32, ((lp.0 >> 16) as i16) as f32);
             with_mc(|m| {
+                if let Some(mut d) = m.drag.take() {
+                    let dist = ((x - d.start.0).powi(2) + (y - d.start.1).powi(2)).sqrt();
+                    if d.active || dist > 8.0 * m.dpi {
+                        d.active = true;
+                        m.set_hover(None);
+                        let orig = m.tiles[d.idx].to;
+                        let (w, h) = (orig.w * 0.42, orig.h * 0.42);
+                        m.place_tile(d.idx, Rect { x: x - w / 2.0, y: y - h / 2.0, w, h }, 220);
+                        let dh = m.desks.iter().find(|(r, _)| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).map(|(_, di)| *di);
+                        m.set_desk_hover(dh.filter(|di| *di != m.cur_desk));
+                    }
+                    m.drag = Some(d);
+                    return;
+                }
                 let i = m.tile_at(x, y);
                 m.set_hover(i);
             });
@@ -359,7 +433,37 @@ unsafe extern "system" fn mc_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_LBUTTONUP => {
             let (x, y) = ((lp.0 as i16) as f32, ((lp.0 >> 16) as i16) as f32);
+            let _ = ReleaseCapture();
             let in_r = |r: &Rect| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+            let dragged = with_mc(|m| {
+                m.set_desk_hover(None);
+                let d = m.drag.take()?;
+                if !d.active {
+                    return None;
+                }
+                let drop_desk = m.desks.iter().find(|(r, _)| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).map(|(_, di)| *di);
+                if let Some(target_desk) = drop_desk.filter(|di| *di != m.cur_desk) {
+                    let hwnd_tile = m.tiles[d.idx].hwnd;
+                    if nacre_platform::vdesk::move_window_to_desktop(hwnd_tile, target_desk) {
+                        let rem = m.tiles.remove(d.idx);
+                        thumbnail::unregister(rem.handle);
+                        return Some(true);
+                    }
+                }
+                let orig = m.tiles[d.idx].to;
+                m.place_tile(d.idx, orig, 255);
+                Some(false)
+            })
+            .flatten();
+            if let Some(moved) = dragged {
+                if moved {
+                    let empty = with_mc(|m| m.tiles.is_empty()).unwrap_or(false);
+                    if empty {
+                        close();
+                    }
+                }
+                return LRESULT(0);
+            }
             let desk = with_mc(|m| {
                 if let Some(p) = m.plus.filter(|p| in_r(p)) {
                     let _ = p;

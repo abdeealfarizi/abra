@@ -1,8 +1,11 @@
-use nacre_core::dock::items::{name_from_path, Pin};
+use nacre_core::dock::items::{is_separator, name_from_path, Pin};
 use std::io::Write;
 use std::path::Path;
 
 pub fn name_for(path: &str) -> String {
+    if is_separator(path) {
+        return "---".to_string();
+    }
     let n = nacre_platform::wins::names::friendly(path);
     if n.is_empty() {
         name_from_path(path)
@@ -24,9 +27,19 @@ pub fn load(path: &Path) -> Vec<Pin> {
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(|l| match l.split_once('\t') {
-                Some((p, n)) if !n.trim().is_empty() => Pin { path: p.to_string(), name: n.trim().to_string() },
-                _ => Pin { path: l.to_string(), name: name_for(l) },
+            .enumerate()
+            .map(|(idx, l)| {
+                if l == "---" || l.starts_with("---\t") {
+                    Pin { path: format!("sep:{}", idx + 1), name: "---".to_string() }
+                } else if l.to_ascii_lowercase().starts_with("sep:") {
+                    let p = l.split('\t').next().unwrap_or(l).trim().to_string();
+                    Pin { path: p, name: "---".to_string() }
+                } else {
+                    match l.split_once('\t') {
+                        Some((p, n)) if !n.trim().is_empty() => Pin { path: p.to_string(), name: n.trim().to_string() },
+                        _ => Pin { path: l.to_string(), name: name_for(l) },
+                    }
+                }
             })
             .collect(),
         Err(_) => default_pins(),

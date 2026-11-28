@@ -22,12 +22,14 @@ mod switcher;
 mod mainwin;
 mod paths;
 mod popup;
+mod quicklook;
 mod strip;
 mod topmost;
 mod macshortcuts;
 mod single_instance;
 mod tasks;
 mod themes;
+mod traffic;
 mod updater;
 
 use nacre_core::visibility::policy::Mode;
@@ -274,6 +276,9 @@ fn main() {
     }
     switcher::shutdown();
     stage::shutdown();
+    mission::shutdown();
+    spotlight::shutdown();
+    launchpad::shutdown();
     nacre_platform::clipboard::shutdown();
     macshortcuts::shutdown();
     release_all("exit");

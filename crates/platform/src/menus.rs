@@ -11,6 +11,7 @@ pub struct Entry {
     pub separator: bool,
     pub depth: u8,
     pub header: bool,
+    pub children: Vec<Entry>,
 }
 
 #[derive(Clone, Debug)]
@@ -43,7 +44,7 @@ unsafe fn item_text(m: HMENU, pos: u32) -> String {
 
 unsafe fn collect(m: HMENU, depth: u8, out: &mut Vec<Entry>) {
     let n = GetMenuItemCount(Some(m));
-    if n <= 0 || depth > 2 {
+    if n <= 0 || depth > 3 {
         return;
     }
     for i in 0..n as u32 {
@@ -57,7 +58,7 @@ unsafe fn collect(m: HMENU, depth: u8, out: &mut Vec<Entry>) {
         }
         if info.fType.0 & MFT_SEPARATOR.0 != 0 {
             if out.last().map(|e| !e.separator).unwrap_or(false) {
-                out.push(Entry { id: 0, label: String::new(), accel: String::new(), enabled: false, checked: false, separator: true, depth, header: false });
+                out.push(Entry { id: 0, label: String::new(), accel: String::new(), enabled: false, checked: false, separator: true, depth, header: false, children: Vec::new() });
             }
             continue;
         }
@@ -75,10 +76,13 @@ unsafe fn collect(m: HMENU, depth: u8, out: &mut Vec<Entry>) {
         let enabled = info.fState.0 & (MFS_DISABLED.0 | MFS_GRAYED.0) == 0;
         let checked = info.fState.0 & MFS_CHECKED.0 != 0;
         if !info.hSubMenu.0.is_null() {
-            out.push(Entry { id: 0, label, accel: String::new(), enabled: false, checked: false, separator: false, depth, header: true });
-            collect(info.hSubMenu, depth + 1, out);
+            let mut children = Vec::new();
+            collect(info.hSubMenu, depth + 1, &mut children);
+            if !children.is_empty() {
+                out.push(Entry { id: 0, label, accel: String::new(), enabled, checked, separator: false, depth, header: false, children });
+            }
         } else {
-            out.push(Entry { id: info.wID, label, accel, enabled, checked, separator: false, depth, header: false });
+            out.push(Entry { id: info.wID, label, accel, enabled, checked, separator: false, depth, header: false, children: Vec::new() });
         }
     }
     while out.last().map(|e| e.separator).unwrap_or(false) {
