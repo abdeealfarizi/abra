@@ -80,7 +80,6 @@ struct St {
     fly: Option<Fly>,
     dying: Option<Popup>,
     hold: Vec<String>,
-    sig: String,
     peek: bool,
     want_fg: isize,
     refused: Vec<String>,
@@ -156,7 +155,6 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
                 fly: None,
                 dying: None,
                 hold: Vec::new(),
-                sig: String::new(),
                 peek: false,
                 want_fg: 0,
                 refused: Vec::new(),
@@ -226,10 +224,6 @@ fn parked_file() -> std::path::PathBuf {
 pub fn shutdown() {
     with(|s| s.deactivate());
     nacre_platform::desktopicons::set_visible(true);
-}
-
-pub fn is_active() -> bool {
-    with(|s| s.active).unwrap_or(false)
 }
 
 pub fn shot_for(app: &str) -> Option<Bitmap> {

@@ -93,9 +93,8 @@ struct Panel {
     cell: f32,
     gap: f32,
     mods: Vec<Mod>,
-    slots: Vec<Rect>,
     edit_btn: Rect,
-    panels: Vec<GlassPanel>,
+    _panels: Vec<GlassPanel>,
     drag: Option<(usize, f32, f32)>,
     slider: Option<usize>,
     w: f32,
@@ -126,7 +125,7 @@ struct Gallery {
     done: Rect,
     scroll: f32,
     content_h: f32,
-    panels: Vec<GlassPanel>,
+    _panels: Vec<GlassPanel>,
     conts: Vec<(Rect, ContainerVisual, f32)>,
     hover: Option<usize>,
     tracking: bool,
@@ -544,7 +543,7 @@ impl Cc {
                 if let Ok(k) = p.popup.content.Children() {
                     let _ = k.RemoveAll();
                 }
-                p.panels.clear();
+                p._panels.clear();
                 dpi = p.dpi;
                 p.popup
             }
@@ -600,7 +599,6 @@ impl Cc {
             m.cont = mc.clone();
             mods.push(m);
         }
-        let mut slots = Vec::new();
         if self.edit {
             for row in 0..rows {
                 for col in 0..4 {
@@ -609,7 +607,6 @@ impl Cc {
                     }
                     let r: Rect = (col as f32 * (cell + gap), row as f32 * (cell + gap), cell, cell);
                     let _ = self.rrect(&content, r, cell / 2.0, Color { A: 40, R: 255, G: 255, B: 255 });
-                    slots.push(r);
                 }
             }
         }
@@ -645,7 +642,7 @@ impl Cc {
 
         let hwnd = popup.hwnd;
         let rect = popup.rect;
-        self.panel = Some(Panel { popup, dpi, cell, gap, mods, slots, edit_btn, panels, drag: None, slider: None, w: pw, chip, hover: None, preview: Vec::new(), shift: HashMap::new(), lift: (0.0, 0.0), resize: None, ghost: None });
+        self.panel = Some(Panel { popup, dpi, cell, gap, mods, edit_btn, _panels: panels, drag: None, slider: None, w: pw, chip, hover: None, preview: Vec::new(), shift: HashMap::new(), lift: (0.0, 0.0), resize: None, ghost: None });
         if self.edit {
             nacre_platform::input::end_dismiss();
         } else {
@@ -1377,16 +1374,6 @@ impl Cc {
         }
     }
 
-    fn move_to(&mut self, from: Kind, over: Kind) {
-        let (Some(a), Some(b)) = (self.layout.iter().position(|k| *k == from), self.layout.iter().position(|k| *k == over)) else { return };
-        if a == b {
-            return;
-        }
-        let k = self.layout.remove(a);
-        self.layout.insert(b, k);
-        self.build();
-    }
-
     fn open_gallery(&mut self) {
         let Some(p) = self.panel.as_ref() else { return };
         let dpi = p.dpi;
@@ -1398,7 +1385,7 @@ impl Cc {
         let x = (rect.0 as f32 + pad() - gw - 16.0 * dpi).max(10.0 * dpi);
         let _ = popup.set_rect(x as i32, rect.1 + pad() as i32, gw as i32, gh as i32);
         let _ = popup.panel.set_radius(26.0 * dpi);
-        self.gallery = Some(Gallery { popup, dpi, cat: None, query: String::new(), cards: vec![], cats: vec![], done: (0.0, 0.0, 0.0, 0.0), scroll: 0.0, content_h: 0.0, panels: vec![], conts: vec![], hover: None, tracking: false });
+        self.gallery = Some(Gallery { popup, dpi, cat: None, query: String::new(), cards: vec![], cats: vec![], done: (0.0, 0.0, 0.0, 0.0), scroll: 0.0, content_h: 0.0, _panels: vec![], conts: vec![], hover: None, tracking: false });
         self.refresh_gallery();
         if let Some(g) = &self.gallery {
             g.popup.show();

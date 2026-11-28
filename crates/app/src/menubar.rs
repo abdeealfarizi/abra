@@ -34,13 +34,15 @@ const T_APP: usize = 3;
 const T_FS: usize = 4;
 const T_SIG: usize = 5;
 const T_EDGE: usize = 6;
+const T_IME: usize = 7;
 const WM_RAIL_EDGE: u32 = WM_APP + 76;
 static RAIL_SMART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static RAIL_EDGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static RAIL_ZONE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(40);
-static RAIL_TOP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-static RAIL_L: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
-static RAIL_R: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MAX);
+static RAIL_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RAIL_ZONE: [std::sync::atomic::AtomicI32; 4] = [const { std::sync::atomic::AtomicI32::new(40) }; 4];
+static RAIL_TOP: [std::sync::atomic::AtomicI32; 4] = [const { std::sync::atomic::AtomicI32::new(0) }; 4];
+static RAIL_L: [std::sync::atomic::AtomicI32; 4] = [const { std::sync::atomic::AtomicI32::new(i32::MIN) }; 4];
+static RAIL_R: [std::sync::atomic::AtomicI32; 4] = [const { std::sync::atomic::AtomicI32::new(i32::MAX) }; 4];
 const BAR_W: i32 = 600;
 const APP_W: i32 = 800;
 
@@ -55,8 +57,17 @@ const SEARCH: u32 = 12;
 const WIFI: u32 = 13;
 const BATT: u32 = 14;
 const STAGEI: u32 = 15;
+const INPUT: u32 = 16;
+const TRAY: u32 = 17;
 const NATIVE0: u32 = 50;
 const NATIVE_CMD: usize = 100_000;
+const CMD_IME_TOGGLE: usize = 900;
+const CMD_IME_VI: usize = 901;
+const CMD_IME_EN: usize = 902;
+const CMD_IME_SETTINGS: usize = 903;
+const CMD_IME_LAYOUT0: usize = 920;
+const CMD_TRAY_SETTINGS: usize = 950;
+const CMD_TRAY0: usize = 960;
 
 struct Bar {
     popup: Popup,
@@ -91,6 +102,7 @@ struct Bar {
     fullscreen: bool,
     edge: bool,
     smart_hidden: bool,
+    input: nacre_platform::ime::State,
 }
 
 struct Ctl {
@@ -99,16 +111,26 @@ struct Ctl {
 }
 
 thread_local! {
-    static BAR: RefCell<Option<Box<Bar>>> = const { RefCell::new(None) };
+    static BARS: RefCell<Vec<Box<Bar>>> = const { RefCell::new(Vec::new()) };
     static CTL: RefCell<Option<Ctl>> = const { RefCell::new(None) };
 }
 
-fn with_bar<R>(f: impl FnOnce(&mut Bar) -> R) -> Option<R> {
-    BAR.with(|c| c.try_borrow_mut().ok().and_then(|mut b| b.as_mut().map(|b| f(b))))
+fn with_bars(mut f: impl FnMut(&mut Bar)) {
+    BARS.with(|c| {
+        if let Ok(mut v) = c.try_borrow_mut() {
+            for b in v.iter_mut() {
+                f(b);
+            }
+        }
+    });
+}
+
+fn with_bar_hwnd<R>(hwnd: HWND, f: impl FnOnce(&mut Bar) -> R) -> Option<R> {
+    BARS.with(|c| c.try_borrow_mut().ok().and_then(|mut v| v.iter_mut().find(|b| b.popup.hwnd == hwnd).map(|b| f(b))))
 }
 
 pub fn refresh_radios() {
-    with_bar(|b| {
+    with_bars(|b| {
         if let Some(r) = &b.radios {
             let _ = r.commands.send(radio::Cmd::Refresh);
         }
@@ -146,10 +168,21 @@ unsafe extern "system" fn ll_mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
         if m == WM_MOUSEMOVE && RAIL_SMART.load(std::sync::atomic::Ordering::Relaxed) {
             let pt = (*(lp.0 as *const MSLLHOOKSTRUCT)).pt;
             let o = std::sync::atomic::Ordering::Relaxed;
-            let inside = pt.x >= RAIL_L.load(o) && pt.x < RAIL_R.load(o);
-            let y = pt.y - RAIL_TOP.load(o);
+            let n = RAIL_N.load(o).min(4);
             let was = RAIL_EDGE.load(o);
-            let now = if inside && y <= 1 { true } else if !inside || y > RAIL_ZONE.load(o) { false } else { was };
+            let mut at_top = false;
+            let mut in_zone = false;
+            for i in 0..n {
+                let inside = pt.x >= RAIL_L[i].load(o) && pt.x < RAIL_R[i].load(o);
+                let y = pt.y - RAIL_TOP[i].load(o);
+                if inside && y >= 0 && y <= 1 {
+                    at_top = true;
+                }
+                if inside && y >= 0 && y <= RAIL_ZONE[i].load(o) {
+                    in_zone = true;
+                }
+            }
+            let now = if at_top { true } else if !in_zone { false } else { was };
             if now != was {
                 RAIL_EDGE.store(now, std::sync::atomic::Ordering::Relaxed);
                 let ctl = BAR_CTL.load(std::sync::atomic::Ordering::Relaxed);
@@ -176,11 +209,16 @@ unsafe extern "system" fn ll_mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
 }
 
 fn loc_hook(ev: u32, hwnd: isize) {
-    if hwnd != 0 && (ev == tracker::EV_FOREGROUND || (ev == tracker::EV_LOCATION && hwnd == focus::foreground())) {
+    if hwnd != 0
+        && (matches!(
+            ev,
+            tracker::EV_FOREGROUND | tracker::EV_MOVESIZE_END | tracker::EV_MINIMIZE_START | tracker::EV_MINIMIZE_END | tracker::EV_DESTROY
+        ) || (ev == tracker::EV_LOCATION && (hwnd == focus::foreground() || hwnd == tracker::external_foreground())))
+    {
         CTL.with(|c| {
             if let Some(ctl) = c.borrow().as_ref() {
                 unsafe {
-                    SetTimer(Some(ctl.hwnd), T_FS, 200, None);
+                    SetTimer(Some(ctl.hwnd), T_FS, 25, None);
                 }
             }
         });
@@ -189,10 +227,6 @@ fn loc_hook(ev: u32, hwnd: isize) {
 
 fn is_fullscreen(hwnd: isize, area: nacre_core::display::Area) -> bool {
     nacre_platform::wins::overlap::evaluate(hwnd, std::process::id(), (0, 0, 0, 0), area).fullscreen
-}
-
-fn rail_monitor() -> nacre_core::display::Monitor {
-    nacre_platform::monitors::target(prefs::get().rail_screen)
 }
 
 pub fn init(comp: &Compositor) -> windows_core::Result<()> {
@@ -212,79 +246,117 @@ pub fn init(comp: &Compositor) -> windows_core::Result<()> {
     Ok(())
 }
 
+fn desired_monitors() -> Vec<nacre_core::display::Monitor> {
+    let screen = prefs::get().rail_screen;
+    if screen == nacre_core::display::Screen::All {
+        nacre_platform::monitors::list()
+    } else {
+        vec![nacre_platform::monitors::target(screen)]
+    }
+}
+
+fn sync_rail_zones() {
+    let o = std::sync::atomic::Ordering::Relaxed;
+    BARS.with(|c| {
+        if let Ok(v) = c.try_borrow() {
+            let n = v.len().min(4);
+            for (i, b) in v.iter().take(4).enumerate() {
+                RAIL_L[i].store(b.area.x, o);
+                RAIL_R[i].store(b.area.right(), o);
+                RAIL_TOP[i].store(b.area.y, o);
+                RAIL_ZONE[i].store(b.h + (12.0 * b.dpi) as i32, o);
+            }
+            RAIL_N.store(n, o);
+        }
+    });
+}
+
+fn destroy_bars() {
+    let list = BARS.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    for b in list {
+        b.menu.hide();
+        shell::appbar::release_top_if(b.popup.hwnd);
+        unsafe {
+            let _ = DestroyWindow(b.popup.hwnd);
+        }
+    }
+    services::register_bars(&[]);
+    RAIL_N.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn apply_prefs() {
     let want = prefs::get().menubar;
-    let have = BAR.with(|c| c.borrow().is_some());
+    let have = BARS.with(|c| !c.borrow().is_empty());
     if want && !have {
         let comp = CTL.with(|c| c.borrow().as_ref().map(|c| c.comp.clone()));
         if let Some(comp) = comp {
-            match create(&comp) {
-                Ok(b) => {
-                    let hwnd = b.popup.hwnd;
-                    BAR.with(|c| *c.borrow_mut() = Some(b));
-                    services::register_bar(hwnd);
-                    with_bar(|b| {
-                        b.refresh_app();
-                        b.relayout();
-                        b.render();
-                        b.sync_behavior();
-                    });
-                    services::post_island(WM_APP + 72);
-                    CTL.with(|c| {
-                        if let Some(ctl) = c.borrow().as_ref() {
-                            unsafe {
-                                SetTimer(Some(ctl.hwnd), T_APP, 900, None);
-                            }
-                        }
-                    });
-                    log::line("menubar", "dibuat");
-                    crate::hotcorners::raise();
+            let mons = desired_monitors();
+            let mut created = Vec::new();
+            let mut hwnds = Vec::new();
+            for mon in mons {
+                match create(&comp, mon) {
+                    Ok(b) => {
+                        hwnds.push(b.popup.hwnd);
+                        created.push(b);
+                    }
+                    Err(e) => log::line("menubar", &format!("gagal: {e}")),
                 }
-                Err(e) => log::line("menubar", &format!("gagal: {e}")),
+            }
+            if !created.is_empty() {
+                BARS.with(|c| *c.borrow_mut() = created);
+                services::register_bars(&hwnds);
+                with_bars(|b| {
+                    b.refresh_app();
+                    b.relayout();
+                    b.render();
+                    b.sync_behavior();
+                });
+                sync_rail_zones();
+                services::post_island(WM_APP + 72);
+                CTL.with(|c| {
+                    if let Some(ctl) = c.borrow().as_ref() {
+                        unsafe {
+                            SetTimer(Some(ctl.hwnd), T_APP, 900, None);
+                        }
+                    }
+                });
+                log::line("menubar", &format!("dibuat ({})", hwnds.len()));
+                crate::hotcorners::raise();
             }
         }
     } else if !want && have {
-        let b = BAR.with(|c| c.borrow_mut().take());
-        if let Some(b) = b {
-            b.menu.hide();
-            shell::appbar::release_top_if(b.popup.hwnd);
-            unsafe {
-                let _ = DestroyWindow(b.popup.hwnd);
-            }
-        }
+        destroy_bars();
         services::set_rail_area(None);
         log::line("menubar", "dihancurkan");
         services::post_island(crate::prefs::WM_PREFS);
     } else if want {
-        let rescale = with_bar(|b| {
-            let mon = rail_monitor();
-            let want_dpi = mon.scale() * prefs::ui_scale();
-            (want_dpi - b.dpi).abs() > 0.01 || mon.area != b.area
-        })
-        .unwrap_or(false);
-        if rescale {
-            let b = BAR.with(|c| c.borrow_mut().take());
-            if let Some(b) = b {
-                b.menu.hide();
-                shell::appbar::release_top_if(b.popup.hwnd);
-                unsafe {
-                    let _ = DestroyWindow(b.popup.hwnd);
-                }
+        let mons = desired_monitors();
+        let rescale = BARS.with(|c| {
+            let v = c.borrow();
+            if v.len() != mons.len() {
+                return true;
             }
+            v.iter().zip(mons.iter()).any(|(b, mon)| {
+                let want_dpi = mon.scale() * prefs::ui_scale();
+                (want_dpi - b.dpi).abs() > 0.01 || mon.area != b.area
+            })
+        });
+        if rescale {
+            destroy_bars();
             apply_prefs();
             return;
         }
-        with_bar(|b| {
+        with_bars(|b| {
             b.apply_look();
             b.relayout();
             b.render();
             b.sync_behavior();
         });
+        sync_rail_zones();
     }
 }
 
-fn create(comp: &Compositor) -> windows_core::Result<Box<Bar>> {
-    let mon = rail_monitor();
+fn create(comp: &Compositor, mon: nacre_core::display::Monitor) -> windows_core::Result<Box<Bar>> {
     let area = mon.area;
     let screen = area.size();
     let glass = prefs::apply(nacre_ui::glass::GlassParams::dark((10.0, 10.0), 0.0), &prefs::bar_look());
@@ -320,6 +392,7 @@ fn create(comp: &Compositor) -> windows_core::Result<Box<Bar>> {
         SetTimer(Some(popup.hwnd), T_CLOCK, time::ms_to_next_minute().max(200), None);
         SetTimer(Some(popup.hwnd), T_STATUS, 60_000, None);
         SetTimer(Some(popup.hwnd), T_SIG, 4_000, None);
+        SetTimer(Some(popup.hwnd), T_IME, 1_200, None);
     }
     let hw = popup.hwnd.0 as isize;
     let radios = radio::spawn(move || unsafe {
@@ -381,6 +454,7 @@ fn create(comp: &Compositor) -> windows_core::Result<Box<Bar>> {
         fullscreen: false,
         edge: false,
         smart_hidden: false,
+        input: nacre_platform::ime::read(0),
     });
     bar.apply_bg();
     Ok(bar)
@@ -405,7 +479,7 @@ unsafe extern "system" fn ctl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             GetWindowThreadProcessId(HWND(root as *mut _), Some(&mut pid));
             let shell = matches!(cls.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "NotifyIconOverflowWindow" | "TopLevelWindowForOverflowXamlIsland");
             if pid != std::process::id() && !shell {
-                with_bar(|b| {
+                with_bars(|b| {
                     if b.refresh_app_for(root) {
                         b.relayout();
                         b.render();
@@ -419,7 +493,7 @@ unsafe extern "system" fn ctl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 SetTimer(Some(hwnd), T_EDGE, prefs::get().rail_reveal.rail_ms(), None);
             } else {
                 let _ = KillTimer(Some(hwnd), T_EDGE);
-                with_bar(|b| {
+                with_bars(|b| {
                     b.edge = false;
                     b.apply_visibility();
                 });
@@ -428,15 +502,18 @@ unsafe extern "system" fn ctl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         }
         WM_TIMER if wp.0 == T_EDGE => {
             let _ = KillTimer(Some(hwnd), T_EDGE);
-            with_bar(|b| {
-                b.edge = RAIL_EDGE.load(std::sync::atomic::Ordering::Relaxed);
+            let mut pt = windows::Win32::Foundation::POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            let active = RAIL_EDGE.load(std::sync::atomic::Ordering::Relaxed);
+            with_bars(|b| {
+                b.edge = active && pt.x >= b.area.x && pt.x < b.area.right() && pt.y >= b.area.y && pt.y <= b.area.y + b.h + (12.0 * b.dpi) as i32;
                 b.apply_visibility();
             });
             LRESULT(0)
         }
         WM_TIMER if wp.0 == T_FS => {
             let _ = KillTimer(Some(hwnd), T_FS);
-            with_bar(|b| {
+            with_bars(|b| {
                 b.check_fullscreen();
                 b.recheck_color();
             });
@@ -444,7 +521,7 @@ unsafe extern "system" fn ctl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         }
         WM_TIMER if wp.0 == T_APP => {
             let _ = KillTimer(Some(hwnd), T_APP);
-            with_bar(|b| {
+            with_bars(|b| {
                 if b.refresh_app() {
                     b.relayout();
                     b.render();
@@ -573,11 +650,9 @@ impl Bar {
     fn sync_behavior(&mut self) {
         let mode = prefs::get().rail;
         RAIL_SMART.store(mode == Behavior::Smart, std::sync::atomic::Ordering::Relaxed);
-        RAIL_ZONE.store(self.h + (12.0 * self.dpi) as i32, std::sync::atomic::Ordering::Relaxed);
-        RAIL_TOP.store(self.area.y, std::sync::atomic::Ordering::Relaxed);
-        RAIL_L.store(self.area.x, std::sync::atomic::Ordering::Relaxed);
-        RAIL_R.store(self.area.right(), std::sync::atomic::Ordering::Relaxed);
-        services::set_rail_area(Some(self.area));
+        if self.area.x == 0 && self.area.y == 0 || services::rail_area().is_none() {
+            services::set_rail_area(Some(self.area));
+        }
         if mode == Behavior::Fixed {
             shell::appbar::reserve_top(self.popup.hwnd, self.area, self.h);
         } else {
@@ -629,6 +704,11 @@ impl Bar {
         }
         self.native = native;
         self.native_hwnd = fg;
+        let next_input = nacre_platform::ime::read(fg);
+        if next_input != self.input {
+            self.input = next_input;
+            changed = true;
+        }
         let wins = enumerate::list(std::process::id());
         let name = wins
             .iter()
@@ -693,6 +773,14 @@ impl Bar {
             let extra = if prefs::get().battery_pct == 2 { self.small_w(&format!("{pct}%"), 12.0, BAR_W) + 5.0 * d } else { 0.0 };
             right.push(LItem { id: BATT, width: 40.0 * d + extra });
         }
+        if prefs::get().rail_input {
+            let badge = self.input.badge();
+            if !badge.is_empty() {
+                let w = (self.small_w(&badge, 10.5, BAR_W) + 18.0 * d).max(34.0 * d);
+                right.push(LItem { id: INPUT, width: w });
+            }
+        }
+        right.push(LItem { id: TRAY, width: icon_w });
         let gap = services::notch_on(self.area).map(|(l, r, _)| Gap { left: l as f32, right: r as f32 });
         let (l, r) = lay::layout(self.screen.0 as f32, 6.0 * d, &left, &right, gap);
         self.left = l;
@@ -731,7 +819,7 @@ impl Bar {
         };
         match lang {
             nacre_core::i18n::Lang::En => format!("{} {} {}  {}", days[wd % 7], mon, n.day, time),
-            nacre_core::i18n::Lang::Id | nacre_core::i18n::Lang::Es => format!("{} {} {}  {}", days[wd % 7], n.day, mon, time),
+            nacre_core::i18n::Lang::Id | nacre_core::i18n::Lang::Es | nacre_core::i18n::Lang::Vi => format!("{} {} {}  {}", days[wd % 7], n.day, mon, time),
         }
     }
 
@@ -967,6 +1055,25 @@ impl Bar {
         let _ = go();
     }
 
+    fn draw_input(&mut self, x: f32, w: f32) {
+        let badge = self.input.badge();
+        if badge.is_empty() {
+            return;
+        }
+        let d = self.dpi;
+        let rgb = self.fg();
+        if !self.shadow {
+            let bw = (w - 8.0 * d).max(24.0 * d);
+            let bh = (16.0 * d).min(self.h as f32 - 6.0 * d);
+            let bx = x + (w - bw) / 2.0;
+            let by = (self.h as f32 - bh) / 2.0;
+            let alpha = if badge == "VI" { 38 } else { 24 };
+            let layer = self.layer.clone();
+            self.rect(&layer, bx, by, bw, bh, bh / 2.0, Color { A: alpha, R: rgb[0], G: rgb[1], B: rgb[2] });
+        }
+        self.small_text(&badge, 10.5, BAR_W, rgb, x + w / 2.0, self.h as f32 / 2.0, 0.96);
+    }
+
     fn draw_items(&mut self) {
         let lefts = self.left.clone();
         let rights = self.right.clone();
@@ -999,6 +1106,8 @@ impl Bar {
                         self.draw_battery(p.x, p.w)
                     }
                 }
+                INPUT => self.draw_input(p.x, p.w),
+                TRAY => self.draw_glyph("\u{E712}", cx, 13.0, 0.92),
                 _ => {}
             }
         }
@@ -1032,9 +1141,11 @@ impl Bar {
         let ms = |v: u32| TimeSpan { Duration: v as i64 * 10_000 };
         match active.and_then(|id| self.rect_of(id)) {
             Some((x, w)) => {
-                let (ch, cy) = (self.h as f32 - 4.0 * d, 2.0 * d);
-                let nw = w - 4.0 * d;
-                let to = Vector3 { X: x + 2.0 * d, Y: cy, Z: 0.0 };
+                let ch = (22.0 * d).min(self.h as f32 - 4.0 * d);
+                let cy = (self.h as f32 - ch) / 2.0;
+                let nw = (w - 4.0 * d).max(ch);
+                let nx = x + (w - nw) / 2.0;
+                let to = Vector3 { X: nx, Y: cy, Z: 0.0 };
                 let visible = self.capsule.Opacity().unwrap_or(0.0) > 0.5;
                 let (old_off, old_w) = (self.capsule.Offset().unwrap_or(to), self.capsule.Size().map(|s| s.X).unwrap_or(nw));
                 let moved = visible && ((old_off.X - to.X).abs() > 0.5 || (old_w - nw).abs() > 0.5);
@@ -1057,8 +1168,9 @@ impl Bar {
                     }
                 }
                 if let Ok(g) = self.comp.CreateRoundedRectangleGeometry() {
+                    let r = (ch / 2.0).min(nw / 2.0);
                     let _ = g.SetSize(Vector2 { X: nw, Y: ch });
-                    let _ = g.SetCornerRadius(Vector2 { X: ch / 2.0, Y: ch / 2.0 });
+                    let _ = g.SetCornerRadius(Vector2 { X: r, Y: r });
                     if let Ok(clip) = self.comp.CreateGeometricClip() {
                         let _ = clip.SetGeometry(&g);
                         let _ = self.capsule.SetClip(&clip);
@@ -1124,7 +1236,7 @@ impl Bar {
     }
 
     fn has_menu(id: u32) -> bool {
-        matches!(id, LOGO | APP) || (NATIVE0..NATIVE0 + 20).contains(&id) || (PROF0..PROF0 + 12).contains(&id)
+        matches!(id, LOGO | APP | INPUT | TRAY) || (NATIVE0..NATIVE0 + 20).contains(&id) || (PROF0..PROF0 + 12).contains(&id)
     }
 
     fn open_menu(&mut self, id: u32) {
@@ -1163,7 +1275,7 @@ impl Bar {
         if (NATIVE0..NATIVE0 + 20).contains(&id) {
             return items;
         }
-        items.into_iter().map(|it| { let s = nacre_core::symbols::for_command(it.id); it.with_sym(s) }).collect()
+        items.into_iter().map(|it| { let s = it.sym.or_else(|| nacre_core::symbols::for_command(it.id)); it.with_sym(s) }).collect()
     }
 
     fn menu_items_raw(&self, id: u32) -> Vec<Item> {
@@ -1171,19 +1283,18 @@ impl Bar {
         if (NATIVE0..NATIVE0 + 20).contains(&id) {
             let tops = nacre_platform::menus::read(self.native_hwnd).unwrap_or_else(|| self.native.clone());
             let Some(top) = tops.get((id - NATIVE0) as usize) else { return vec![] };
-            return top
-                .entries
-                .iter()
-                .map(|e| {
-                    if e.separator {
-                        return Item::separator();
-                    }
-                    let pad = "    ".repeat(e.depth as usize);
-                    let label = format!("{}{}{}", if e.checked { "\u{2713} " } else { "" }, pad, e.label);
-                    let it = Item::action(if e.header { 0 } else { NATIVE_CMD + e.id as usize }, &label, e.enabled && !e.header);
-                    if e.accel.is_empty() { it } else { it.with_accel(&e.accel) }
-                })
-                .collect();
+            fn to_item(e: &nacre_platform::menus::Entry) -> Item {
+                if e.separator {
+                    return Item::separator();
+                }
+                let label = format!("{}{}", if e.checked { "\u{2713} " } else { "" }, e.label);
+                if !e.children.is_empty() {
+                    return Item::action(0, &label, e.enabled).with_children(e.children.iter().map(to_item).collect());
+                }
+                let it = Item::action(if e.header { 0 } else { NATIVE_CMD + e.id as usize }, &label, e.enabled && !e.header);
+                if e.accel.is_empty() { it } else { it.with_accel(&e.accel) }
+            }
+            return top.entries.iter().map(to_item).collect();
         }
         match id {
             CTRL => {
@@ -1248,6 +1359,44 @@ impl Bar {
                     Item::separator(),
                     a(204, &format!("{} {}", prefs::tr("Keluar dari"), name)).with_accel("Ctrl+Alt+Q"),
                 ]
+            }
+            INPUT => {
+                let mut list = Vec::new();
+                if let Some(ext) = &self.input.external {
+                    list.push(Item::heading(ext.kind.name()));
+                    list.push(a(CMD_IME_VI, if ext.vietnamese { "\u{2713} Tiếng Việt" } else { "Tiếng Việt" }));
+                    list.push(a(CMD_IME_EN, if !ext.vietnamese { "\u{2713} English" } else { "English" }));
+                    list.push(a(CMD_IME_TOGGLE, prefs::tr("Tukar mode (VI / EN)")).with_accel(ext.switch_key.label()));
+                }
+                if !self.input.layouts.is_empty() {
+                    if !list.is_empty() {
+                        list.push(Item::separator());
+                    }
+                    list.push(Item::heading(prefs::tr("Bahasa masukan")));
+                    for (i, lay) in self.input.layouts.iter().enumerate().take(20) {
+                        let mark = if lay.hkl == self.input.active_hkl { "\u{2713} " } else { "" };
+                        list.push(a(CMD_IME_LAYOUT0 + i, &format!("{mark}{} ({})", lay.name, lay.code)));
+                    }
+                }
+                if !list.is_empty() {
+                    list.push(Item::separator());
+                }
+                list.push(a(CMD_IME_SETTINGS, prefs::tr("Pengaturan bahasa…")).with_sym(Some(nacre_core::symbols::Sym::Keyboard)));
+                list
+            }
+            TRAY => {
+                let apps = nacre_platform::tray::running();
+                let mut list = vec![Item::heading(prefs::tr("Aplikasi latar"))];
+                if apps.is_empty() {
+                    list.push(Item::action(0, prefs::tr("Tidak ada aplikasi latar"), false));
+                } else {
+                    for (i, app) in apps.iter().enumerate().take(24) {
+                        list.push(a(CMD_TRAY0 + i, &app.name));
+                    }
+                }
+                list.push(Item::separator());
+                list.push(a(CMD_TRAY_SETTINGS, prefs::tr("Pengaturan Sistem…")).with_sym(Some(nacre_core::symbols::Sym::Gear)));
+                list
             }
             n if (PROF0..PROF0 + 12).contains(&n) => {
                 let lang = current_lang();
@@ -1358,6 +1507,45 @@ impl Bar {
             202 => self.hide_app(true),
             203 => self.show_all(),
             204 => crate::macshortcuts::quit_foreground_app(),
+            CMD_IME_TOGGLE => {
+                if let Some(ext) = self.input.external.clone() {
+                    let vi = nacre_platform::ime::toggle_external(&ext);
+                    if let Some(e) = &mut self.input.external {
+                        e.vietnamese = vi;
+                    }
+                    self.relayout();
+                    self.render();
+                }
+            }
+            CMD_IME_VI | CMD_IME_EN => {
+                if let Some(ext) = self.input.external.clone() {
+                    let vi = nacre_platform::ime::set_external_vi(&ext, cmd == CMD_IME_VI);
+                    if let Some(e) = &mut self.input.external {
+                        e.vietnamese = vi;
+                    }
+                    self.relayout();
+                    self.render();
+                }
+            }
+            CMD_IME_SETTINGS => launch::open("ms-settings:regionlanguage"),
+            CMD_TRAY_SETTINGS => launch::open("ms-settings:taskbar"),
+            c if (CMD_TRAY0..CMD_TRAY0 + 24).contains(&c) => {
+                if let Some(app) = nacre_platform::tray::running().get(c - CMD_TRAY0) {
+                    nacre_platform::tray::activate(app);
+                }
+            }
+            c if (CMD_IME_LAYOUT0..CMD_IME_LAYOUT0 + 20).contains(&c) => {
+                if let Some(lay) = self.input.layouts.get(c - CMD_IME_LAYOUT0).cloned() {
+                    nacre_platform::ime::switch_layout(self.native_hwnd, lay.hkl);
+                    self.input.active_hkl = lay.hkl;
+                    self.input.active_code = lay.code;
+                    self.relayout();
+                    self.render();
+                    unsafe {
+                        let _ = SetTimer(Some(self.popup.hwnd), T_IME, 150, None);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1370,7 +1558,7 @@ impl Bar {
         let path = self.app_path.clone();
         if path.is_empty() {
             crate::settings_win::open(&self.comp);
-        } else if path.to_lowercase().starts_with("shell:") || path.contains('?') {
+        } else if path.to_lowercase().starts_with("shell:") || path.to_lowercase().starts_with("webapp:") || path.contains('?') {
             launch::open("ms-settings:appsfeatures");
         } else if !launch::properties(&path) {
             launch::open("ms-settings:appsfeatures");
@@ -1423,7 +1611,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_MOUSEMOVE => {
             let (x, _) = xy(lp);
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 if !b.tracking {
                     let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
                     if TrackMouseEvent(&mut t).is_ok() {
@@ -1444,7 +1632,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 b.tracking = false;
                 b.hover = None;
                 b.update_capsule();
@@ -1456,7 +1644,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         }
         WM_LBUTTONDOWN => {
             let (x, _) = xy(lp);
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 if let Some(id) = b.id_at(x) {
                     b.press_feedback();
                     b.click(id);
@@ -1464,16 +1652,33 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             });
             LRESULT(0)
         }
+        WM_RBUTTONUP => {
+            let (x, _) = xy(lp);
+            with_bar_hwnd(hwnd, |b| {
+                if b.id_at(x) == Some(INPUT) {
+                    b.close_menu();
+                    b.press_feedback();
+                    nacre_platform::ime::quick_switch(b.native_hwnd, &b.input);
+                    b.input = nacre_platform::ime::read(b.native_hwnd);
+                    b.relayout();
+                    b.render();
+                    unsafe {
+                        let _ = SetTimer(Some(hwnd), T_IME, 150, None);
+                    }
+                }
+            });
+            LRESULT(0)
+        }
         MENU_PICK => {
-            with_bar(|b| b.pick(wp.0));
+            with_bar_hwnd(hwnd, |b| b.pick(wp.0));
             LRESULT(0)
         }
         MENU_CLOSE => {
-            with_bar(|b| b.close_menu());
+            with_bar_hwnd(hwnd, |b| b.close_menu());
             LRESULT(0)
         }
         WM_NOTCH => {
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 b.relayout();
                 b.render();
             });
@@ -1481,11 +1686,11 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         }
         WM_TEST_NET => {
             if wp.0 == 10 {
-                with_bar(|b| b.click(CTRL));
+                with_bar_hwnd(hwnd, |b| b.click(CTRL));
             } else if wp.0 == 3 {
                 crate::netmenu::test_toggle_others();
             } else if wp.0 == 4 || wp.0 == 8 {
-                let h = with_bar(|b| b.area.y + b.h).unwrap_or(30);
+                let h = with_bar_hwnd(hwnd, |b| b.area.y + b.h).unwrap_or(30);
                 crate::controlcenter::toggle(h);
             } else if wp.0 == 5 {
                 crate::controlcenter::test_open_picker();
@@ -1495,7 +1700,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 crate::netmenu::test_click_audio();
             } else {
                 let which = if wp.0 == 1 || wp.0 == 6 { crate::netmenu::Which::Bluetooth } else { crate::netmenu::Which::Wifi };
-                with_bar(|b| {
+                with_bar_hwnd(hwnd, |b| {
                     if let Some((x, _)) = b.rect_of(WIFI) {
                         crate::netmenu::show(&b.comp, which, crate::netmenu::Anchor::Below(x as i32, b.h), b.dpi);
                     }
@@ -1504,7 +1709,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             LRESULT(0)
         }
         m if m == WM_APP + 22 => {
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 if let Some(r) = &b.radios {
                     while let Ok(s) = r.snapshots.try_recv() {
                         b.wifi = s.wifi;
@@ -1517,10 +1722,33 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             LRESULT(0)
         }
         WM_TIMER if wp.0 == T_SIG => {
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 let v = nacre_platform::wifi::link().map(|l| l.1);
                 if v != b.wifi_bars {
                     b.wifi_bars = v;
+                    b.render();
+                }
+            });
+            LRESULT(0)
+        }
+        WM_TIMER if wp.0 == T_IME => {
+            unsafe {
+                let _ = SetTimer(Some(hwnd), T_IME, 1_200, None);
+            }
+            let screen_mode = prefs::get().rail_screen;
+            let follow_moved = (screen_mode == nacre_core::display::Screen::Active
+                && with_bar_hwnd(hwnd, |b| b.open.is_none() && !b.tracking && nacre_platform::monitors::under_cursor().area != b.area).unwrap_or(false))
+                || (screen_mode == nacre_core::display::Screen::All
+                    && BARS.with(|c| c.borrow().len() != nacre_platform::monitors::count()));
+            if follow_moved {
+                apply_prefs();
+                return LRESULT(0);
+            }
+            with_bar_hwnd(hwnd, |b| {
+                let next = nacre_platform::ime::read(b.native_hwnd);
+                if next != b.input {
+                    b.input = next;
+                    b.relayout();
                     b.render();
                 }
             });
@@ -1531,7 +1759,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             if id == T_CLOCK {
                 let _ = SetTimer(Some(hwnd), T_CLOCK, time::ms_to_next_minute().max(200), None);
             }
-            with_bar(|b| {
+            with_bar_hwnd(hwnd, |b| {
                 b.relayout();
                 b.render();
             });

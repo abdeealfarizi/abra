@@ -1,9 +1,10 @@
 use std::ffi::c_void;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
+    EnumWindows, GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
     IsZoomed, GWL_EXSTYLE, GWL_STYLE, WS_CAPTION, WS_EX_TOOLWINDOW,
 };
 
@@ -61,27 +62,25 @@ fn frame_rect(h: HWND) -> Option<RECT> {
     Some(r)
 }
 
-pub fn evaluate(fg: isize, own_pid: u32, dock: (i32, i32, i32, i32), area: nacre_core::display::Area) -> Overlap {
+fn eval_single(h: HWND, own_pid: u32, dock: (i32, i32, i32, i32), area: nacre_core::display::Area) -> Option<Overlap> {
     let screen = area.size();
-    let none = Overlap::default();
-    let h = HWND(fg as *mut _);
     unsafe {
-        if fg == 0 || !IsWindow(Some(h)).as_bool() || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
-            return none;
+        if h.0.is_null() || !IsWindow(Some(h)).as_bool() || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+            return None;
         }
         let mut cloaked = 0u32;
         if DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, 4).is_ok() && cloaked != 0 {
-            return none;
+            return None;
         }
         let mut pid = 0u32;
         GetWindowThreadProcessId(h, Some(&mut pid));
         if pid == own_pid || is_shell_class(&class_of(h)) {
-            return none;
+            return None;
         }
         if GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 {
-            return none;
+            return None;
         }
-        let Some(mut r) = frame_rect(h) else { return none };
+        let mut r = frame_rect(h)?;
         r.left -= area.x;
         r.right -= area.x;
         r.top -= area.y;
@@ -89,7 +88,7 @@ pub fn evaluate(fg: isize, own_pid: u32, dock: (i32, i32, i32, i32), area: nacre
         let dock = (dock.0 - area.x, dock.1 - area.y, dock.2 - area.x, dock.3 - area.y);
         let (cx, cy) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
         if cx < 0 || cy < 0 || cx >= screen.0 || cy >= screen.1 {
-            return none;
+            return None;
         }
         let frame = (r.left, r.top, r.right, r.bottom);
         let zoomed = IsZoomed(h).as_bool();
@@ -97,11 +96,47 @@ pub fn evaluate(fg: isize, own_pid: u32, dock: (i32, i32, i32, i32), area: nacre
         let work = work_area(h).map(|w| (w.0 - area.x, w.1 - area.y, w.2 - area.x, w.3 - area.y)).unwrap_or((0, 0, screen.0, screen.1));
         let fullscreen = is_fullscreen(frame, screen, work, zoomed, caption) || exclusive_fullscreen();
         if fullscreen || zoomed {
-            return Overlap { overlapped: true, fullscreen };
+            return Some(Overlap { overlapped: true, fullscreen });
         }
         let hit = r.bottom > dock.1 && r.top < dock.3 && r.right > dock.0 && r.left < dock.2;
-        Overlap { overlapped: hit, fullscreen: false }
+        Some(Overlap { overlapped: hit, fullscreen: false })
     }
+}
+
+struct FsScan {
+    own_pid: u32,
+    area: nacre_core::display::Area,
+    found: bool,
+}
+
+unsafe extern "system" fn each_fullscreen(hwnd: HWND, lp: LPARAM) -> BOOL {
+    let scan = &mut *(lp.0 as *mut FsScan);
+    if let Some(ov) = eval_single(hwnd, scan.own_pid, (0, 0, 0, 0), scan.area) {
+        if ov.fullscreen {
+            scan.found = true;
+            return BOOL(0);
+        }
+    }
+    BOOL(1)
+}
+
+pub fn evaluate(fg: isize, own_pid: u32, dock: (i32, i32, i32, i32), area: nacre_core::display::Area) -> Overlap {
+    let mut ov = if fg != 0 {
+        eval_single(HWND(fg as *mut _), own_pid, dock, area).unwrap_or_default()
+    } else {
+        Overlap::default()
+    };
+    if !ov.fullscreen {
+        let mut scan = FsScan { own_pid, area, found: false };
+        unsafe {
+            let _ = EnumWindows(Some(each_fullscreen), LPARAM(&mut scan as *mut FsScan as isize));
+        }
+        if scan.found {
+            ov.fullscreen = true;
+            ov.overlapped = true;
+        }
+    }
+    ov
 }
 
 fn exclusive_fullscreen() -> bool {

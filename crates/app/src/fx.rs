@@ -1,8 +1,9 @@
-use crate::prefs;
+use crate::{prefs, traffic};
 use nacre_platform::wins::park::{self, Parked};
 use nacre_platform::wins::{enumerate, focus, snapshot, tracker};
 use nacre_platform::{log, sys};
 use nacre_ui::gfx::Gfx;
+use nacre_ui::glass::{GlassPanel, GlassParams};
 use nacre_ui::host::{attach, Host, Surface};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -15,9 +16,13 @@ use windows::UI::Composition::{
 };
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows_core::{Interface, HSTRING};
 use windows_numerics::{Matrix3x2, Vector2, Vector3};
+
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 const WM_FX: u32 = WM_APP + 60;
 const T_CAPTURE: usize = 1;
@@ -90,6 +95,11 @@ struct Fx {
     shadow_target: isize,
     shadow_key: (i32, i32, i32),
     shadow_rect: (i32, i32, i32, i32),
+    traffic: Option<TrafficWin>,
+    traffic_target: isize,
+    traffic_rect: (i32, i32, i32, i32),
+    traffic_hover: bool,
+    traffic_key: (i32, bool, bool),
 }
 
 struct ShadowWin {
@@ -98,9 +108,17 @@ struct ShadowWin {
     sprite: SpriteVisual,
 }
 
+struct TrafficWin {
+    hwnd: HWND,
+    surface: Surface,
+    panel: GlassPanel,
+    content: ContainerVisual,
+    scale: f32,
+}
+
 const T_SHADOW: usize = 5;
 const T_SHADOW_WATCH: usize = 6;
-const SHADOW_MARGIN: i32 = 44;
+const SHADOW_MARGIN: i32 = 56;
 
 thread_local! {
     static FX: RefCell<Option<Fx>> = const { RefCell::new(None) };
@@ -173,6 +191,11 @@ pub fn init(host: &Host) -> windows_core::Result<()> {
                 shadow_target: 0,
                 shadow_key: (0, 0, 0),
                 shadow_rect: (0, 0, 0, 0),
+                traffic: None,
+                traffic_target: 0,
+                traffic_rect: (0, 0, 0, 0),
+                traffic_hover: false,
+                traffic_key: (0, false, false),
             })
         });
         prefs::listen(hwnd);
@@ -190,7 +213,7 @@ pub fn init(host: &Host) -> windows_core::Result<()> {
         {
             let fg = focus::foreground();
             if eligible(fg) {
-                with_fx(|fx| fx.update_shadow(fg, true));
+                with_fx(|fx| fx.update_look(fg, true));
             }
         }
         log::line("fx", "siap");
@@ -206,21 +229,20 @@ pub fn restore_all() {
     }
 }
 
-fn shadow_bitmap(w: i32, h: i32, m: i32, dy: f32, radius: f32, k: i32) -> (u32, u32, Vec<u8>) {
+fn shadow_bitmap(w: i32, h: i32, m: i32, dy: f32, radius: f32, blur: f32, k: i32) -> (u32, u32, Vec<u8>) {
     let (fw, fh) = (w + 2 * m, h + 2 * m);
     let (bw, bh) = (((fw / k).max(2)) as u32, ((fh / k).max(2)) as u32);
     let (hx, hy) = (w as f32 / 2.0, h as f32 / 2.0);
     let (cx, cy) = (fw as f32 / 2.0, fh as f32 / 2.0 + dy);
     let r = radius.min(hx).min(hy);
-    let blur = 30.0f32;
-    let peak = 0.26f32;
+    let peak = 0.30f32;
     let mut out = vec![0u8; (bw * bh * 4) as usize];
     for y in 0..bh {
         for x in 0..bw {
             let (px, py) = ((x as f32 + 0.5) * k as f32, (y as f32 + 0.5) * k as f32);
             let (qx, qy) = ((px - cx).abs() - (hx - r), (py - cy).abs() - (hy - r));
             let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
-            let t = (d / blur).clamp(0.0, 1.0);
+            let t = (d / blur.max(1.0)).clamp(0.0, 1.0);
             let a = peak * (1.0 - t) * (1.0 - t) * (1.0 - t);
             let i = ((y * bw + x) * 4) as usize;
             out[i + 3] = (a * 255.0).round() as u8;
@@ -305,7 +327,7 @@ pub fn restore(target: isize, icon: (i32, i32, i32, i32), dock: isize) -> bool {
         fx.snap = Some(s);
         fx.pending_restore = Some((target, dock));
         unsafe {
-            SetTimer(Some(fx.hwnd), T_RESTORE, START_DELAY + Kind::Restore.ms() - 30, None);
+            SetTimer(Some(fx.hwnd), T_RESTORE, START_DELAY + Kind::Restore.ms() - 45, None);
         }
         true
     })
@@ -374,6 +396,9 @@ impl Fx {
     }
 
     fn play(&mut self, surface: CompositionDrawingSurface, a: (i32, i32, i32, i32), b: (i32, i32, i32, i32), kind: Kind) {
+        if matches!(kind, Kind::Minimize | Kind::Restore) {
+            crate::notch::suppress_for(START_DELAY + kind.ms() + 100);
+        }
         if matches!(kind, Kind::Minimize | Kind::Restore) && genie_on() {
             let (win, icon) = if kind == Kind::Restore { (b, a) } else { (a, b) };
             match self.play_genie(surface, win, icon, kind == Kind::Restore) {
@@ -382,7 +407,8 @@ impl Fx {
                     unsafe {
                         self.cover();
                         let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-                        SetTimer(Some(self.hwnd), T_HIDE, START_DELAY + kind.ms() + 80, None);
+                        let tail = if kind == Kind::Restore { 24 } else { 80 };
+                        SetTimer(Some(self.hwnd), T_HIDE, START_DELAY + kind.ms() + tail, None);
                     }
                 }
                 Err(e) => log::line("fx", &format!("genie gagal: {e}")),
@@ -485,10 +511,10 @@ impl Fx {
         }
         let w = GRect { x: win.0 as f32, y: win.1 as f32, w: win.2.max(1) as f32, h: win.3.max(1) as f32 };
         let ic = GRect { x: icon.0 as f32, y: icon.1 as f32, w: icon.2.max(1) as f32, h: icon.3.max(1) as f32 };
-        let n = ((w.h / 5.0) as usize).clamp(48, 120);
+        let n = ((w.h / 3.0) as usize).clamp(64, 160);
         let sh = w.h / n as f32;
         let ms = if reverse { Kind::Restore.ms() } else { Kind::Minimize.ms() };
-        let samples = ((ms / 12) as usize).clamp(24, 48);
+        let samples = ((ms / 8) as usize).clamp(48, 72);
         let root = self.comp.CreateContainerVisual()?;
         self.surface.root.Children()?.InsertAtTop(&root)?;
         let (dur, delay) = (span(ms), span(START_DELAY));
@@ -525,9 +551,10 @@ impl Fx {
         }
         let fade = self.comp.CreateScalarKeyFrameAnimation()?;
         if reverse {
-            fade.InsertKeyFrame(0.0, 0.0)?;
-            fade.InsertKeyFrame(0.08, 1.0)?;
-            fade.InsertKeyFrame(1.0, 1.0)?;
+            fade.InsertKeyFrame(0.0, 0.15)?;
+            fade.InsertKeyFrame(0.10, 1.0)?;
+            fade.InsertKeyFrame(0.90, 1.0)?;
+            fade.InsertKeyFrame(1.0, 0.0)?;
         } else {
             fade.InsertKeyFrame(0.0, 1.0)?;
             fade.InsertKeyFrame(0.88, 1.0)?;
@@ -536,7 +563,7 @@ impl Fx {
         fade.SetDuration(dur)?;
         fade.SetDelayTime(delay)?;
         fade.SetDelayBehavior(AnimationDelayBehavior::SetInitialValueBeforeDelay)?;
-        root.SetOpacity(if reverse { 0.0 } else { 1.0 })?;
+        root.SetOpacity(if reverse { 0.15 } else { 1.0 })?;
         root.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from("Opacity"), &fade)?;
         self.genie = Some(root);
         Ok(())
@@ -699,38 +726,67 @@ impl Fx {
 
     fn hide_shadow(&mut self) {
         self.shadow_target = 0;
-        unsafe {
-            let _ = KillTimer(Some(self.hwnd), T_SHADOW_WATCH);
-        }
         if let Some(s) = &self.shadow {
             unsafe {
                 let _ = ShowWindow(s.hwnd, SW_HIDE);
             }
         }
+        if self.traffic_target == 0 {
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), T_SHADOW_WATCH);
+            }
+        }
     }
 
-    fn watch_shadow(&mut self) {
-        let t = self.shadow_target;
+    fn hide_traffic(&mut self) {
+        self.traffic_target = 0;
+        self.traffic_hover = false;
+        if let Some(t) = &self.traffic {
+            unsafe {
+                let _ = ShowWindow(t.hwnd, SW_HIDE);
+            }
+        }
+        if self.shadow_target == 0 {
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), T_SHADOW_WATCH);
+            }
+        }
+    }
+
+    fn update_look(&mut self, h: isize, full: bool) {
+        self.update_shadow(h, full);
+        self.update_traffic(h);
+    }
+
+    fn watch_look(&mut self) {
+        let t = if self.shadow_target != 0 { self.shadow_target } else { self.traffic_target };
         if t == 0 {
             self.hide_shadow();
+            self.hide_traffic();
             return;
         }
         let fg = focus::foreground();
         if fg != t {
             if eligible(fg) {
-                self.update_shadow(fg, true);
+                self.update_look(fg, true);
             } else {
                 self.hide_shadow();
+                self.hide_traffic();
             }
             return;
         }
         let gone = unsafe { IsIconic(HWND(t as *mut _)).as_bool() } || enumerate::cloaked(t);
         if gone {
             self.hide_shadow();
+            self.hide_traffic();
             return;
         }
-        if snapshot::frame_rect(t) != Some(self.shadow_rect) {
+        let rect = snapshot::frame_rect(t);
+        if rect != Some(self.shadow_rect) && self.shadow_target != 0 {
             self.update_shadow(t, true);
+        }
+        if rect != Some(self.traffic_rect) && self.traffic_target != 0 {
+            self.update_traffic(t);
         }
     }
 
@@ -738,22 +794,129 @@ impl Fx {
         match event {
             tracker::EV_FOREGROUND => {
                 if eligible(h) {
-                    self.update_shadow(h, true);
+                    self.update_look(h, true);
                 } else {
                     self.hide_shadow();
+                    self.hide_traffic();
                 }
             }
-            tracker::EV_LOCATION if h == self.shadow_target => {
-                self.update_shadow(h, false);
+            tracker::EV_LOCATION if h == self.shadow_target || h == self.traffic_target => {
+                self.update_look(h, false);
                 unsafe {
                     SetTimer(Some(self.hwnd), T_SHADOW, 120, None);
                 }
             }
-            tracker::EV_MOVESIZE_END if h == self.shadow_target => {
-                self.update_shadow(h, true);
+            tracker::EV_MOVESIZE_END if h == self.shadow_target || h == self.traffic_target => {
+                self.update_look(h, true);
             }
-            tracker::EV_MINIMIZE_START | tracker::EV_DESTROY if h == self.shadow_target => self.hide_shadow(),
+            tracker::EV_MINIMIZE_START | tracker::EV_DESTROY if h == self.shadow_target || h == self.traffic_target => {
+                self.hide_shadow();
+                self.hide_traffic();
+            }
             _ => {}
+        }
+    }
+
+    fn ensure_traffic_window(&mut self) -> windows_core::Result<()> {
+        if self.traffic.is_some() {
+            return Ok(());
+        }
+        unsafe {
+            let hi: HINSTANCE = GetModuleHandleW(None)?.into();
+            let class = w!("AbraTraffic");
+            RegisterClassW(&WNDCLASSW {
+                lpfnWndProc: Some(traffic_proc),
+                hInstance: hi,
+                lpszClassName: class,
+                hCursor: LoadCursorW(None, IDC_ARROW)?,
+                ..Default::default()
+            });
+            let hwnd = CreateWindowExW(
+                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+                class,
+                w!("abra-traffic"),
+                WS_POPUP,
+                0, 0, 66, 24,
+                None, None, Some(hi), None,
+            )?;
+            let surface = attach(&self.comp, hwnd, (66.0, 24.0))?;
+            let look = prefs::look(prefs::Role::Themed);
+            let panel = GlassPanel::new(&self.comp, &surface.root, prefs::apply(GlassParams::dark((66.0, 24.0), 12.0), &look))?;
+            let content = self.comp.CreateContainerVisual()?;
+            surface.root.Children()?.InsertAtTop(&content)?;
+            self.traffic = Some(TrafficWin { hwnd, surface, panel, content, scale: 1.0 });
+        }
+        Ok(())
+    }
+
+    fn repaint_traffic(&mut self) {
+        let Some(tw) = &self.traffic else { return };
+        let look = prefs::look(prefs::Role::Themed);
+        let scale = tw.scale;
+        let (pw, ph) = (66.0 * scale, 24.0 * scale);
+        let _ = tw.panel.set_params(prefs::apply(GlassParams::dark((pw, ph), ph / 2.0), &look));
+        let key = ((scale * 100.0).round() as i32, self.traffic_hover, look.dark);
+        if key == self.traffic_key {
+            return;
+        }
+        self.traffic_key = key;
+        if let Ok(k) = tw.content.Children() {
+            let _ = k.RemoveAll();
+        }
+        traffic::render(
+            &self.comp,
+            &tw.content,
+            traffic::Layout::pill(scale),
+            traffic::Opts { active: true, hover: self.traffic_hover, dark: look.dark, can_min: true, can_zoom: true },
+            scale,
+        );
+    }
+
+    fn set_traffic_hover(&mut self, on: bool) {
+        if self.traffic_hover != on {
+            self.traffic_hover = on;
+            self.repaint_traffic();
+        }
+    }
+
+    fn update_traffic(&mut self, h: isize) {
+        let p = prefs::get();
+        if !p.win_traffic || h == 0 || !eligible(h) {
+            self.hide_traffic();
+            return;
+        }
+        let hw = HWND(h as *mut _);
+        if unsafe { IsIconic(hw).as_bool() } {
+            self.hide_traffic();
+            return;
+        }
+        let Some((x, y, w, ht)) = snapshot::frame_rect(h) else { return };
+        if w < 220 || ht < 120 {
+            self.hide_traffic();
+            return;
+        }
+        if self.ensure_traffic_window().is_err() {
+            return;
+        }
+        let scale = unsafe { GetDpiForWindow(hw) }.max(96) as f32 / 96.0;
+        let (pw, ph) = ((66.0 * scale).round() as i32, (24.0 * scale).round() as i32);
+        let (px, py) = (x + (12.0 * scale).round() as i32, y + (8.0 * scale).round() as i32);
+        if let Some(tw) = &mut self.traffic {
+            tw.scale = scale;
+            let _ = tw.surface.root.SetSize(Vector2 { X: pw as f32, Y: ph as f32 });
+            let _ = tw.panel.set_rect(0.0, 0.0, pw as f32, ph as f32);
+            let _ = tw.panel.set_radius(ph as f32 / 2.0);
+        }
+        self.repaint_traffic();
+        if let Some(tw) = &self.traffic {
+            unsafe {
+                let _ = SetWindowPos(tw.hwnd, Some(HWND_TOPMOST), px, py, pw, ph, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+            self.traffic_target = h;
+            self.traffic_rect = (x, y, w, ht);
+            unsafe {
+                SetTimer(Some(self.hwnd), T_SHADOW_WATCH, 250, None);
+            }
         }
     }
 
@@ -804,13 +967,13 @@ impl Fx {
             return;
         }
         let scale = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() }.max(96) as f32 / 96.0;
-        let (m, dy, radius) = ((SHADOW_MARGIN as f32 * scale) as i32, 10.0 * scale, 8.0 * scale);
+        let (m, dy, radius, blur) = ((SHADOW_MARGIN as f32 * scale) as i32, 14.0 * scale, 12.0 * scale, 40.0 * scale);
         let (fw, fh) = (w + 2 * m, ht + 2 * m);
         let key = (fw, fh, radius as i32);
         let go = |this: &mut Fx| -> windows_core::Result<()> {
             let Some(sh) = &this.shadow else { return Ok(()) };
             if full && key != this.shadow_key {
-                let (bw, bh, data) = shadow_bitmap(w, ht, m, dy, radius, 4);
+                let (bw, bh, data) = shadow_bitmap(w, ht, m, dy, radius, blur, 4);
                 let surface = this.gfx.surface_from_bgra(bw, bh, &data)?;
                 let brush = this.comp.CreateSurfaceBrushWithSurface(&surface)?;
                 brush.SetStretch(CompositionStretch::Fill)?;
@@ -853,9 +1016,14 @@ impl Fx {
     fn apply_prefs(&mut self) {
         let fg = focus::foreground();
         if eligible(fg) {
-            self.update_shadow(fg, true);
-        } else if !prefs::get().win_shadow {
-            self.hide_shadow();
+            self.update_look(fg, true);
+        } else {
+            if !prefs::get().win_shadow {
+                self.hide_shadow();
+            }
+            if !prefs::get().win_traffic {
+                self.hide_traffic();
+            }
         }
         unsafe {
             if enabled() {
@@ -900,12 +1068,12 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             with_fx(|fx| match id {
                 T_SHADOW => {
-                    let t = fx.shadow_target;
+                    let t = if fx.shadow_target != 0 { fx.shadow_target } else { fx.traffic_target };
                     if t != 0 {
-                        fx.update_shadow(t, true);
+                        fx.update_look(t, true);
                     }
                 }
-                T_SHADOW_WATCH => fx.watch_shadow(),
+                T_SHADOW_WATCH => fx.watch_look(),
                 T_OPEN_POLL => fx.poll_open(),
                 T_OPEN_END => fx.end_open(),
                 T_CAPTURE | T_REFRESH => fx.capture_current(),
@@ -931,6 +1099,35 @@ unsafe extern "system" fn shadow_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_NCHITTEST => LRESULT(-1),
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+unsafe extern "system" fn traffic_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_MOUSEMOVE => {
+            let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+            let _ = TrackMouseEvent(&mut t);
+            with_fx(|fx| fx.set_traffic_hover(true));
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            with_fx(|fx| fx.set_traffic_hover(false));
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let (x, y) = ((lp.0 as i16) as f32, ((lp.0 >> 16) as i16) as f32);
+            let act = with_fx(|fx| {
+                let scale = fx.traffic.as_ref().map(|t| t.scale).unwrap_or(1.0);
+                traffic::hit(traffic::Layout::pill(scale), x, y).map(|btn| (fx.traffic_target, btn))
+            })
+            .flatten();
+            if let Some((target, btn)) = act {
+                traffic::apply_external(target, btn);
+            }
+            LRESULT(0)
+        }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }

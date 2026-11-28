@@ -153,10 +153,12 @@ fn weekday_label(wd: u32) -> String {
     const ID: [&str; 7] = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
     const EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const ES: [&str; 7] = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+    const VI: [&str; 7] = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
     match lang() {
         nacre_core::i18n::Lang::Id => ID[(wd % 7) as usize],
         nacre_core::i18n::Lang::En => EN[(wd % 7) as usize],
         nacre_core::i18n::Lang::Es => ES[(wd % 7) as usize],
+        nacre_core::i18n::Lang::Vi => VI[(wd % 7) as usize],
     }.to_string()
 }
 

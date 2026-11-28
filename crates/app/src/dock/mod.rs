@@ -80,6 +80,8 @@ const CMD_TRASH_OPEN: usize = 9;
 const CMD_TRASH_EMPTY: usize = 10;
 const CMD_STACK_FOLDER: usize = 11;
 const CMD_FORGET: usize = 12;
+const CMD_SEP_ADD: usize = 13;
+const CMD_SEP_REMOVE: usize = 14;
 const CMD_STACK: usize = 100;
 const RECENTS_KEEP: usize = 8;
 const RECENTS_SHOW: usize = 3;
@@ -100,6 +102,7 @@ enum Entry {
     Start,
     Launchpad,
     App(usize),
+    PinSep(usize),
     Sep,
     Trash,
     Downloads,
@@ -112,6 +115,7 @@ const LAUNCHPAD_KEY: &str = "abra:launchpad";
 
 struct MenuInfo {
     item: Option<Item>,
+    sep_key: Option<String>,
     trash: bool,
     special: Option<&'static str>,
 }
@@ -174,6 +178,8 @@ pub struct Dock {
     trash_full: bool,
     worker: icons::Worker,
     plates: bool,
+    show_start: bool,
+    show_apps: bool,
 
     tracking: bool,
     region_full: bool,
@@ -324,7 +330,7 @@ impl Dock {
             let surface = host.attach(hwnd, (400.0, 120.0))?;
             let stage = host.compositor.CreateContainerVisual()?;
             surface.root.Children()?.InsertAtTop(&stage)?;
-            let mut panel = GlassPanel::new(&host.compositor, &stage, crate::prefs::glass((10.0, 10.0), 22.0 * dpi * crate::prefs::round(crate::prefs::Role::Dock), crate::prefs::Role::Dock))?;
+            let panel = GlassPanel::new(&host.compositor, &stage, crate::prefs::glass((10.0, 10.0), 22.0 * dpi * crate::prefs::round(crate::prefs::Role::Dock), crate::prefs::Role::Dock))?;
             let tier = opts.glass.unwrap_or_else(|| auto_tier(&sys::conditions()));
             panel.set_tier(tier)?;
             let content = host.compositor.CreateContainerVisual()?;
@@ -344,7 +350,10 @@ impl Dock {
             let recents_path = paths::config_dir().join("recents.txt");
             let recents: Vec<Pin> = pins::load(&recents_path)
                 .into_iter()
-                .filter(|r| r.path.to_ascii_lowercase().starts_with("shell:") || std::path::Path::new(&r.path).exists())
+                .filter(|r| {
+                    let low = r.path.to_ascii_lowercase();
+                    low.starts_with("shell:") || low.starts_with("webapp:") || std::path::Path::new(&r.path).exists()
+                })
                 .take(RECENTS_KEEP)
                 .collect();
             let mode = opts.mode;
@@ -401,6 +410,8 @@ impl Dock {
                 trash_full: nacre_platform::recycle::is_full(),
                 worker,
                 plates: crate::prefs::get().dock_plates,
+                show_start: crate::prefs::get().dock_start,
+                show_apps: crate::prefs::get().dock_apps,
                 tracking: false,
                 region_full: false,
                 cursor: None,
@@ -683,22 +694,32 @@ impl Dock {
         );
         self.entries.clear();
         self.slots.clear();
-        self.entries.push(Entry::Start);
-        self.entries.push(Entry::Launchpad);
+        if self.show_start {
+            self.entries.push(Entry::Start);
+        }
+        if self.show_apps {
+            self.entries.push(Entry::Launchpad);
+        }
         let pinned = self.items.iter().filter(|i| i.pinned).count();
         for i in 0..self.items.len() {
-            if i == pinned && pinned > 0 {
+            if i == pinned && pinned > 0 && !matches!(self.entries.last(), Some(Entry::PinSep(_))) {
                 self.entries.push(Entry::Sep);
             }
-            self.entries.push(Entry::App(i));
+            if nacre_core::dock::items::is_separator(&self.items[i].path) {
+                self.entries.push(Entry::PinSep(i));
+            } else {
+                self.entries.push(Entry::App(i));
+            }
         }
-        self.entries.push(Entry::Sep);
+        if !matches!(self.entries.last(), Some(Entry::Sep | Entry::PinSep(_))) {
+            self.entries.push(Entry::Sep);
+        }
         if crate::prefs::get().downloads_stack && nacre_platform::downloads::folder().is_some() {
             self.entries.push(Entry::Downloads);
         }
         self.entries.push(Entry::Trash);
         for e in &self.entries {
-            self.slots.push(if matches!(e, Entry::Sep) { Slot::Separator } else { Slot::Item });
+            self.slots.push(if matches!(e, Entry::Sep | Entry::PinSep(_)) { Slot::Separator } else { Slot::Item });
         }
 
         if let Ok(kids) = self.content.Children() {
@@ -722,7 +743,7 @@ impl Dock {
                 Entry::Start if custom_icons::has(START_KEY) => View::app(&self.comp, &self.content, START_KEY.to_string(), icon, false, self.dpi),
                 Entry::Start => View::start(&self.comp, &self.content, icon),
                 Entry::Launchpad => View::app(&self.comp, &self.content, LAUNCHPAD_KEY.to_string(), icon, false, self.dpi),
-                Entry::Sep => View::separator(&self.comp, &self.content, self.m.separator, icon),
+                Entry::Sep | Entry::PinSep(_) => View::separator(&self.comp, &self.content, self.m.separator, icon),
                 Entry::Trash => View::app(&self.comp, &self.content, TRASH_PATH.to_string(), icon, false, self.dpi),
                 Entry::Downloads => View::app(&self.comp, &self.content, downloads_key(), icon, false, self.dpi),
                 Entry::App(i) => {
@@ -926,6 +947,12 @@ impl Dock {
             self.plates = s.dock_plates;
             self.surfaces.clear();
             self.requested.clear();
+            self.signature.clear();
+            self.refresh_windows();
+        }
+        if s.dock_start != self.show_start || s.dock_apps != self.show_apps {
+            self.show_start = s.dock_start;
+            self.show_apps = s.dock_apps;
             self.signature.clear();
             self.refresh_windows();
         }
@@ -1198,7 +1225,7 @@ impl Dock {
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(e, Entry::App(i) if self.items.get(*i).is_some_and(|it| it.pinned)))
+            .filter(|(_, e)| matches!(e, Entry::App(i) | Entry::PinSep(i) if self.items.get(*i).is_some_and(|it| it.pinned)))
             .map(|(s, _)| s)
             .collect();
         let Some(from) = pinned_slots.iter().position(|s| *s == dragged) else { return };
@@ -1238,7 +1265,7 @@ impl Dock {
             .entries
             .iter()
             .zip(rest.cells.iter())
-            .filter(|(e, _)| matches!(e, Entry::App(i) if self.items.get(*i).is_some_and(|it| it.pinned)))
+            .filter(|(e, _)| matches!(e, Entry::App(i) | Entry::PinSep(i) if self.items.get(*i).is_some_and(|it| it.pinned)))
             .map(|(_, c)| c.x + c.w / 2.0)
             .collect();
         let dropped_above = y < self.card_y - self.m.icon * 0.9;
@@ -1288,7 +1315,7 @@ impl Dock {
                     log::line("dock", &format!("luncurkan {}", it.path));
                 }
             }
-            Entry::Sep => {}
+            Entry::Sep | Entry::PinSep(_) => {}
             Entry::Trash => launch::open("shell:RecycleBinFolder"),
             Entry::Downloads => self.open_stack(),
         }
@@ -1322,14 +1349,27 @@ impl Dock {
     }
 
     fn menu_info(&self, x: f32) -> MenuInfo {
-        match self.entry_at(x) {
-            Some((_, Entry::App(i))) => MenuInfo { item: self.items.get(i).cloned(), trash: false, special: None },
-            Some((_, Entry::Trash)) => MenuInfo { item: None, trash: true, special: None },
-            Some((_, Entry::Downloads)) => MenuInfo { item: None, trash: false, special: Some(DOWNLOADS_KEY) },
-            Some((_, Entry::Start)) => MenuInfo { item: None, trash: false, special: Some(START_KEY) },
-            Some((_, Entry::Launchpad)) => MenuInfo { item: None, trash: false, special: Some(LAUNCHPAD_KEY) },
-            _ => MenuInfo { item: None, trash: false, special: None },
+        if let Some((_, e)) = self.entry_at(x) {
+            return match e {
+                Entry::App(i) => MenuInfo { item: self.items.get(i).cloned(), sep_key: None, trash: false, special: None },
+                Entry::Trash => MenuInfo { item: None, sep_key: None, trash: true, special: None },
+                Entry::Downloads => MenuInfo { item: None, sep_key: None, trash: false, special: Some(DOWNLOADS_KEY) },
+                Entry::Start => MenuInfo { item: None, sep_key: None, trash: false, special: Some(START_KEY) },
+                Entry::Launchpad => MenuInfo { item: None, sep_key: None, trash: false, special: Some(LAUNCHPAD_KEY) },
+                Entry::Sep | Entry::PinSep(_) => MenuInfo { item: None, sep_key: None, trash: false, special: None },
+            };
         }
+        let sep_key = self
+            .layout
+            .cells
+            .iter()
+            .zip(self.entries.iter())
+            .find(|(c, e)| matches!(e, Entry::PinSep(_)) && x >= c.x - 6.0 * self.dpi && x <= c.x + c.w + 6.0 * self.dpi)
+            .and_then(|(_, e)| match e {
+                Entry::PinSep(i) => self.items.get(*i).map(|it| it.key.clone()),
+                _ => None,
+            });
+        MenuInfo { item: None, sep_key, trash: false, special: None }
     }
 
     fn open_menu(&mut self, x: f32) {
@@ -1345,6 +1385,9 @@ impl Dock {
             items.push(menu::Item::action(CMD_OPEN, crate::prefs::tr("Buka"), true));
             let can_pin = it.pinned || !it.path.contains('?');
             items.push(menu::Item::action(CMD_PIN, crate::prefs::tr(if it.pinned { "Hapus dari Deck" } else { "Simpan di Deck" }), can_pin));
+            if it.pinned {
+                items.push(menu::Item::action(CMD_SEP_ADD, crate::prefs::tr("Tambah pemisah"), true));
+            }
             if !it.pinned && !it.running() {
                 items.push(menu::Item::action(CMD_FORGET, crate::prefs::tr("Hapus dari Deck"), true));
             }
@@ -1356,6 +1399,8 @@ impl Dock {
                 items.push(menu::Item::separator());
                 items.push(menu::Item::action(CMD_CLOSE, crate::prefs::tr("Tutup"), true));
             }
+        } else if info.sep_key.is_some() {
+            items.push(menu::Item::action(CMD_SEP_REMOVE, crate::prefs::tr("Hapus pemisah"), true));
         }
         if info.special == Some(DOWNLOADS_KEY) {
             items.push(menu::Item::action(CMD_STACK_FOLDER, crate::prefs::tr("Buka folder Unduhan"), true));
@@ -1368,9 +1413,10 @@ impl Dock {
             }
             items.push(menu::Item::separator());
         }
-        let general = info.item.is_none() && !info.trash && (info.special.is_none() || info.special == Some(START_KEY));
+        let general = info.item.is_none() && info.sep_key.is_none() && !info.trash && (info.special.is_none() || info.special == Some(START_KEY));
         if general {
             items.push(menu::Item::action(CMD_ADD, crate::prefs::tr("Tambah app ke Deck…"), true));
+            items.push(menu::Item::action(CMD_SEP_ADD, crate::prefs::tr("Tambah pemisah"), true));
             items.push(menu::Item::action(CMD_SETTINGS, crate::prefs::tr("Pengaturan ABRA…"), true));
             items.push(menu::Item::separator());
             items.push(menu::Item::action(CMD_QUIT, crate::prefs::tr("Keluar dari ABRA"), true));
@@ -1416,7 +1462,7 @@ impl Dock {
             items.push(menu::Item::separator());
         }
         items.push(menu::Item::action(CMD_STACK_FOLDER, crate::prefs::tr("Buka folder Unduhan"), true));
-        self.pending_menu = Some(MenuInfo { item: None, trash: false, special: Some(DOWNLOADS_KEY) });
+        self.pending_menu = Some(MenuInfo { item: None, sep_key: None, trash: false, special: Some(DOWNLOADS_KEY) });
         if self.menu.is_none() {
             self.menu = Menu::new(&self.comp, self.hwnd, self.dpi, self.tier).ok();
         }
@@ -1620,6 +1666,31 @@ impl Dock {
                     self.refresh_windows();
                 }
             }
+            CMD_SEP_ADD => {
+                let path = nacre_core::dock::items::next_separator_path(&self.pins);
+                let pin = Pin { path, name: "---".to_string() };
+                if let Some(it) = &info.item {
+                    let pos = self.pins.iter().position(|p| key_of(&p.path) == it.key).map(|i| i + 1).unwrap_or(self.pins.len());
+                    self.pins.insert(pos, pin);
+                } else {
+                    self.pins.push(pin);
+                }
+                if let Err(e) = pins::save(&self.pins_path, &self.pins) {
+                    log::line("pins", &format!("simpan gagal: {e}"));
+                }
+                self.signature.clear();
+                self.refresh_windows();
+            }
+            CMD_SEP_REMOVE => {
+                if let Some(k) = &info.sep_key {
+                    self.pins.retain(|p| key_of(&p.path) != *k);
+                    if let Err(e) = pins::save(&self.pins_path, &self.pins) {
+                        log::line("pins", &format!("simpan gagal: {e}"));
+                    }
+                    self.signature.clear();
+                    self.refresh_windows();
+                }
+            }
             CMD_SETTINGS => crate::settings_win::open(&self.comp),
             CMD_TRASH_OPEN => launch::open("shell:RecycleBinFolder"),
             CMD_TRASH_EMPTY => unsafe {
@@ -1735,6 +1806,13 @@ impl Dock {
             }
             TIMER_RECONF => self.on_reconfigure(),
             TIMER_TRASH => {
+                if crate::prefs::get().deck_screen == nacre_core::display::Screen::Active
+                    && !self.menu_open
+                    && self.dragging.is_none()
+                    && self.press.is_none()
+                {
+                    self.on_reconfigure();
+                }
                 let full = nacre_platform::recycle::is_full();
                 if full != self.trash_full {
                     self.trash_full = full;

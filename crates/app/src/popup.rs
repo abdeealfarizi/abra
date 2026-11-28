@@ -78,7 +78,7 @@ impl Popup {
 
     pub fn show(&self) {
         unsafe {
-            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
     }
 
@@ -105,40 +105,6 @@ impl Popup {
             root.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from("Scale"), &s)
         };
         let _ = go();
-    }
-
-    pub fn zoom_in(&self, comp: &Compositor) {
-        use windows::Foundation::TimeSpan;
-        use windows::UI::Composition::{CompositionEasingFunction, CompositionObject};
-        use windows_core::{Interface, HSTRING};
-        let go = || -> Result<()> {
-            let root = &self.surface.root;
-            let (w, h) = (self.rect.2 as f32, self.rect.3 as f32);
-            root.SetCenterPoint(windows_numerics::Vector3 { X: w / 2.0, Y: h / 2.0, Z: 0.0 })?;
-            let ease: CompositionEasingFunction =
-                comp.CreateCubicBezierEasingFunction(Vector2 { X: 0.2, Y: 0.0 }, Vector2 { X: 0.0, Y: 1.0 })?.cast()?;
-            let dur = TimeSpan { Duration: 240 * 10_000 };
-            let o = comp.CreateScalarKeyFrameAnimation()?;
-            o.InsertKeyFrame(0.0, 0.0)?;
-            o.InsertKeyFrameWithEasingFunction(1.0, 1.0, &ease)?;
-            o.SetDuration(dur)?;
-            root.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from("Opacity"), &o)?;
-            let s = comp.CreateVector3KeyFrameAnimation()?;
-            s.InsertKeyFrame(0.0, windows_numerics::Vector3 { X: 1.12, Y: 1.12, Z: 1.0 })?;
-            s.InsertKeyFrameWithEasingFunction(1.0, windows_numerics::Vector3 { X: 1.0, Y: 1.0, Z: 1.0 }, &ease)?;
-            s.SetDuration(dur)?;
-            root.cast::<CompositionObject>()?.StartAnimation(&HSTRING::from("Scale"), &s)
-        };
-        let _ = go();
-    }
-
-    pub fn zoom_out(&self, comp: &Compositor) {
-        let root = &self.surface.root;
-        let (w, h) = (self.rect.2 as f32, self.rect.3 as f32);
-        let _ = root.SetCenterPoint(windows_numerics::Vector3 { X: w / 2.0, Y: h / 2.0, Z: 0.0 });
-        let _ = crate::motion::vec3(comp, root, "Scale", windows_numerics::Vector3 { X: 1.0, Y: 1.0, Z: 1.0 }, windows_numerics::Vector3 { X: 1.08, Y: 1.08, Z: 1.0 }, 170);
-        let _ = crate::motion::scalar(comp, root, "Opacity", 1.0, 0.0, 170);
-        let _ = root.SetOpacity(0.0);
     }
 
     pub fn root(&self) -> &ContainerVisual {

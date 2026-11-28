@@ -23,6 +23,7 @@ impl Menu {
             crate::i18n::Lang::Id => self.id,
             crate::i18n::Lang::En => self.en,
             crate::i18n::Lang::Es => crate::i18n::menu_es(self.en).unwrap_or(self.id),
+            crate::i18n::Lang::Vi => crate::i18n::menu_vi(self.en).unwrap_or(self.en),
         }
     }
 }
@@ -35,6 +36,7 @@ impl Line {
                 crate::i18n::Lang::Id => id,
                 crate::i18n::Lang::En => en,
                 crate::i18n::Lang::Es => crate::i18n::menu_es(en).unwrap_or(id),
+                crate::i18n::Lang::Vi => crate::i18n::menu_vi(en).unwrap_or(en),
             },
         }
     }
@@ -454,5 +456,7 @@ mod tests {
         assert_eq!((m.lines[0].label(crate::i18n::Lang::Id), m.lines[0].label(crate::i18n::Lang::En)), ("Tab Baru", "New Tab"));
         assert_eq!(m.title(crate::i18n::Lang::Es), "Archivo");
         assert_eq!(m.lines[0].label(crate::i18n::Lang::Es), "Nueva pestaña");
+        assert_eq!(m.title(crate::i18n::Lang::Vi), "Tệp");
+        assert_eq!(m.lines[0].label(crate::i18n::Lang::Vi), "Tab mới");
     }
 }

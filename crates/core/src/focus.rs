@@ -163,6 +163,7 @@ pub fn duration_label_lang(minutes: u32, lang: crate::i18n::Lang) -> String {
         (_, crate::i18n::Lang::Id) => format!("{h}j {m}m"),
         (_, crate::i18n::Lang::En) => format!("{h}h {m}m"),
         (_, crate::i18n::Lang::Es) => format!("{h} h {m} min"),
+        (_, crate::i18n::Lang::Vi) => format!("{h}g {m}p"),
     }
 }
 

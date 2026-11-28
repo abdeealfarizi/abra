@@ -1,6 +1,6 @@
-pub const QUIET_MS: u64 = 120;
+pub const QUIET_MS: u64 = 60;
 pub const MAX_WAIT_MS: u64 = 300;
-pub const SWITCH_MS: u64 = 30;
+pub const SWITCH_MS: u64 = 20;
 
 pub fn delay(age_ms: u64, switched: bool) -> u64 {
     if switched {
@@ -22,7 +22,7 @@ mod tests {
     #[test]
     fn a_stream_of_events_cannot_postpone_forever() {
         assert_eq!(delay(0, false), QUIET_MS);
-        assert_eq!(delay(200, false), 100);
+        assert_eq!(delay(250, false), 50);
         assert_eq!(delay(299, false), 1);
         assert_eq!(delay(5000, false), 1);
         let mut age = 0u64;

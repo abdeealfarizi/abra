@@ -413,6 +413,10 @@ pub struct Settings {
     pub capsule_decor: Decor,
     pub accent_rgb: Option<[u8; 3]>,
     pub meeting_companion: bool,
+    pub rail_input: bool,
+    pub win_traffic: bool,
+    pub dock_start: bool,
+    pub dock_apps: bool,
 }
 
 impl Default for Settings {
@@ -511,6 +515,10 @@ impl Default for Settings {
             capsule_layout: Layout::Rotate,
             capsule_decor: Decor::None,
             accent_rgb: None,
+            rail_input: true,
+            win_traffic: false,
+            dock_start: true,
+            dock_apps: true,
         }
     }
 }
@@ -744,6 +752,10 @@ impl Settings {
                 "break_mins" => s.break_mins = crate::focus::parse_list(v, s.break_mins, true),
                 "focus_name" => s.focus_name = ShortText::new(v),
                 "meeting_companion" => s.meeting_companion = parse_bool(v).unwrap_or(s.meeting_companion),
+                "rail_input" => s.rail_input = parse_bool(v).unwrap_or(s.rail_input),
+                "win_traffic" => s.win_traffic = parse_bool(v).unwrap_or(s.win_traffic),
+                "dock_start" => s.dock_start = parse_bool(v).unwrap_or(s.dock_start),
+                "dock_apps" => s.dock_apps = parse_bool(v).unwrap_or(s.dock_apps),
                 "capsule" => s.capsule = Capsule::parse(v),
                 "capsule_layout" => s.capsule_layout = Layout::parse(v).unwrap_or(s.capsule_layout),
                 "capsule_decor" => s.capsule_decor = Decor::parse(v).unwrap_or(s.capsule_decor),
@@ -764,7 +776,7 @@ impl Settings {
 
     pub fn serialize(&self) -> String {
         format!(
-            "# ABRA settings\ntakeover={}\ndock={}\nnotch={}\nblur={}\nstyle={}\ntransparency={}\ntheme={}\nlang={}\ndock_material={}\ndock_round={}\nnotch_material={}\nnotch_round={}\nautostart={}\ndock_size={}\ndock_gap={}\ndock_zoom={}\ndock_margin={}\nanim={}\nrefraction={}\ndock_enabled={}\nnotch_enabled={}\nnotch_hover_open={}\nwin_shadow={}\nmenubar={}\nclock_24h={}\nmenubar_glass={}\nhot_tl={}\nhot_tr={}\nhot_bl={}\nhot_br={}\nstage={}\nswitcher={}\nstage_right={}\nstage_size={}\nstage_gap={}\nstage_count={}\nstage_speed={}\nstage_desktop_click={}\nstage_media={}\nstage_icons={}\nstage_titles={}\nhide_desktop_icons={}\nmenubar_style={}\ndock_plates={}\nover_fullscreen={}\nclipboard_history={}\nicon_style={}\nicon_tint={}\naccent={}\nmac_shortcuts={}\ndownloads_stack={}\nrecent_apps={}\nicon_pack={}\nmenubar_material={}\nicon_variant={}\nmin_effect={}\nnotch_idle={}\ngreet_name={}\ngreet_text={}\nlyrics_compact={}\nlyrics_online={}\nnotch_downloads={}\nnotch_send={}\nui_scale={}\nnotch_island={}\nwidget_style={}\nbattery_pct={}\nrail={}\nnotch_scale={}\nisland_gap={}\nupdate_check={}\nnotch_glow={}\npill_devices={}\npill_notices={}\npill_reminders={}\ntodo_hotkey={}\ndeck_screen={}\nrail_screen={}\nnotch_screen={}\nwidget_screen={}\npreset={}\nvisualizer={}\nfont={}\nreduce_motion={}\nfocus_cat={}\nfocus_mins={}\nbreak_mins={}\nfocus_name={}\nmeeting_companion={}\ncapsule={}\ncapsule_layout={}\ncapsule_decor={}\naccent_rgb={}\ndock_reveal={}\nrail_reveal={}\nnotch_reveal={}\n",
+            "# ABRA settings\ntakeover={}\ndock={}\nnotch={}\nblur={}\nstyle={}\ntransparency={}\ntheme={}\nlang={}\ndock_material={}\ndock_round={}\nnotch_material={}\nnotch_round={}\nautostart={}\ndock_size={}\ndock_gap={}\ndock_zoom={}\ndock_margin={}\nanim={}\nrefraction={}\ndock_enabled={}\nnotch_enabled={}\nnotch_hover_open={}\nwin_shadow={}\nmenubar={}\nclock_24h={}\nmenubar_glass={}\nhot_tl={}\nhot_tr={}\nhot_bl={}\nhot_br={}\nstage={}\nswitcher={}\nstage_right={}\nstage_size={}\nstage_gap={}\nstage_count={}\nstage_speed={}\nstage_desktop_click={}\nstage_media={}\nstage_icons={}\nstage_titles={}\nhide_desktop_icons={}\nmenubar_style={}\ndock_plates={}\nover_fullscreen={}\nclipboard_history={}\nicon_style={}\nicon_tint={}\naccent={}\nmac_shortcuts={}\ndownloads_stack={}\nrecent_apps={}\nicon_pack={}\nmenubar_material={}\nicon_variant={}\nmin_effect={}\nnotch_idle={}\ngreet_name={}\ngreet_text={}\nlyrics_compact={}\nlyrics_online={}\nnotch_downloads={}\nnotch_send={}\nui_scale={}\nnotch_island={}\nwidget_style={}\nbattery_pct={}\nrail={}\nnotch_scale={}\nisland_gap={}\nupdate_check={}\nnotch_glow={}\npill_devices={}\npill_notices={}\npill_reminders={}\ntodo_hotkey={}\ndeck_screen={}\nrail_screen={}\nnotch_screen={}\nwidget_screen={}\npreset={}\nvisualizer={}\nfont={}\nreduce_motion={}\nfocus_cat={}\nfocus_mins={}\nbreak_mins={}\nfocus_name={}\nmeeting_companion={}\ncapsule={}\ncapsule_layout={}\ncapsule_decor={}\naccent_rgb={}\ndock_reveal={}\nrail_reveal={}\nnotch_reveal={}\nrail_input={}\nwin_traffic={}\ndock_start={}\ndock_apps={}\n",
             self.takeover,
             self.dock.key(),
             self.notch.key(),
@@ -860,7 +872,11 @@ impl Settings {
             self.accent_rgb.map(hex).unwrap_or_default(),
             self.dock_reveal.key(),
             self.rail_reveal.key(),
-            self.notch_reveal.key()
+            self.notch_reveal.key(),
+            self.rail_input,
+            self.win_traffic,
+            self.dock_start,
+            self.dock_apps
         )
     }
 }
@@ -919,13 +935,14 @@ pub fn look(s: &Settings, system_dark: bool, material: Material) -> Look {
     };
     let mut blur_sigma = lerp(1.0, 40.0, b) * sigma_k;
     let mut saturation: f32 = sat;
-    let (tr, tg, tb, a_max, a_min) = if dark { (20u8, 20u8, 24u8, 232.0, 40.0) } else { (255, 255, 255, 215.0, 24.0) };
-    let mut a = lerp(a_max, a_min, t);
+    let (tr, tg, tb) = if dark { (20u8, 20u8, 24u8) } else { (255, 255, 255) };
+    let a: f32;
     let highlight: f32;
-    let (mut rim, mut solid, fg) = if dark {
-        ([70u8, 255, 255, 255], [235u8, 28, 28, 32], [255u8, 255, 255])
+    let rim: [u8; 4];
+    let (mut solid, fg) = if dark {
+        ([235u8, 28, 28, 32], [255u8, 255, 255])
     } else {
-        ([150, 255, 255, 255], [235, 238, 240, 246], [24, 24, 28])
+        ([235, 238, 240, 246], [24, 24, 28])
     };
     let (mut tr, mut tg, mut tb) = (tr, tg, tb);
     match material {

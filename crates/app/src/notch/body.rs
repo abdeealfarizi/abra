@@ -41,7 +41,7 @@ pub struct Body {
     pub ear: f32,
     pub top_over: f32,
     pub island: f32,
-    depth: ContainerVisual,
+    _depth: ContainerVisual,
     depth_geo: CompositionRoundedRectangleGeometry,
     sheen: SpriteVisual,
     aurora: ContainerVisual,
@@ -60,7 +60,7 @@ impl Body {
     pub fn new(comp: &Compositor, gfx: &Gfx, root: &ContainerVisual, win: (i32, i32), dpi: f32, tier: Tier) -> windows_core::Result<Body> {
         let stage = comp.CreateContainerVisual()?;
         root.Children()?.InsertAtTop(&stage)?;
-        let mut panel = GlassPanel::new(comp, &stage, glass_params(15.0 * dpi))?;
+        let panel = GlassPanel::new(comp, &stage, glass_params(15.0 * dpi))?;
         panel.set_tier(tier)?;
         let ear = (13.0 * dpi).ceil();
         let make_ear = |left: bool| -> windows_core::Result<(SpriteVisual, SpriteVisual, CompositionDrawingSurface)> {
@@ -128,7 +128,7 @@ impl Body {
             ear,
             top_over: 32.0 * dpi,
             island: 0.0,
-            depth,
+            _depth: depth,
             depth_geo,
             sheen,
             aurora,

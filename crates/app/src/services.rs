@@ -7,7 +7,6 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 pub const WM_VOLUME: u32 = WM_APP + 20;
 pub const WM_BRIGHT: u32 = WM_APP + 21;
-pub const WM_RADIO: u32 = WM_APP + 22;
 
 static HUD: AtomicIsize = AtomicIsize::new(0);
 static ISLAND: AtomicIsize = AtomicIsize::new(0);
@@ -77,10 +76,12 @@ pub fn set_notch(l: i32, r: i32, h: i32, top: i32) {
     NOTCH_L.store(l, Ordering::Relaxed);
     NOTCH_R.store(r, Ordering::Relaxed);
     NOTCH_H.store(h, Ordering::Relaxed);
-    let bar = BAR.load(Ordering::Relaxed);
-    if bar != 0 {
-        unsafe {
-            let _ = PostMessageW(Some(HWND(bar as *mut _)), WM_APP + 71, WPARAM(0), LPARAM(0));
+    let bars = BARS.lock().map(|g| g.clone()).unwrap_or_default();
+    for bar in bars {
+        if bar != 0 {
+            unsafe {
+                let _ = PostMessageW(Some(HWND(bar as *mut _)), WM_APP + 71, WPARAM(0), LPARAM(0));
+            }
         }
     }
 }
@@ -106,9 +107,11 @@ pub fn rail_area() -> Option<nacre_core::display::Area> {
     RAIL_AREA.lock().ok().and_then(|g| *g)
 }
 
-static BAR: AtomicIsize = AtomicIsize::new(0);
-pub fn register_bar(h: HWND) {
-    BAR.store(h.0 as isize, Ordering::Relaxed);
+static BARS: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+pub fn register_bars(list: &[HWND]) {
+    if let Ok(mut g) = BARS.lock() {
+        *g = list.iter().map(|h| h.0 as isize).collect();
+    }
 }
 
 pub fn post_island(msg: u32) {

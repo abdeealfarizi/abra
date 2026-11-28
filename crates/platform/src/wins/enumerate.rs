@@ -127,16 +127,24 @@ unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> BOOL {
         return BOOL(1);
     }
     let mut path = path;
-    if file == "applicationframehost.exe" {
-        if class != "ApplicationFrameWindow" {
+    if file == "applicationframehost.exe" || lower.contains("\\windowsapps\\") {
+        if file == "applicationframehost.exe" && class != "ApplicationFrameWindow" {
             return BOOL(1);
         }
-        path = match super::identity::aumid(hwnd.0 as isize) {
-            Some(id) => super::identity::shell_path(&id),
-            None => format!("{path}?{title}"),
-        };
+        if let Some(id) = super::identity::aumid(hwnd.0 as isize).or_else(|| super::identity::process_aumid(pid)) {
+            path = super::identity::shell_path(&id);
+        } else if file == "applicationframehost.exe" {
+            path = format!("{path}?{title}");
+        }
+    } else if matches!(file, "firefox.exe" | "msedge.exe" | "chrome.exe" | "brave.exe" | "vivaldi.exe" | "zen.exe") {
+        if let Some(wa) = super::identity::webapp_info(hwnd.0 as isize) {
+            path = super::identity::webapp_path(&wa, &path, &title);
+        }
     }
-    let name = super::names::friendly(&path);
+    let mut name = super::names::friendly(&path);
+    if name.is_empty() && path.to_lowercase().starts_with("shell:appsfolder") {
+        name = title.split(" - ").next().unwrap_or(&title).trim().to_string();
+    }
     ctx.out.push(Win { hwnd: hwnd.0 as isize, path, title, name });
     BOOL(1)
 }

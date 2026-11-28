@@ -110,8 +110,8 @@ pub fn due_label_lang(due: i64, now: Civil, lang: crate::i18n::Lang) -> String {
     let t = format!("{h:02}:{m:02}");
     match day - today {
         0 => t,
-        1 => format!("{} {t}", match lang { crate::i18n::Lang::Id => "Besok", crate::i18n::Lang::En => "Tomorrow", crate::i18n::Lang::Es => "Mañana" }),
-        -1 => format!("{} {t}", match lang { crate::i18n::Lang::Id => "Kemarin", crate::i18n::Lang::En => "Yesterday", crate::i18n::Lang::Es => "Ayer" }),
+        1 => format!("{} {t}", match lang { crate::i18n::Lang::Id => "Besok", crate::i18n::Lang::En => "Tomorrow", crate::i18n::Lang::Es => "Mañana", crate::i18n::Lang::Vi => "Ngày mai" }),
+        -1 => format!("{} {t}", match lang { crate::i18n::Lang::Id => "Kemarin", crate::i18n::Lang::En => "Yesterday", crate::i18n::Lang::Es => "Ayer", crate::i18n::Lang::Vi => "Hôm qua" }),
         _ => {
             let (y, mo, d) = civil_from_days(day);
             let _ = y;

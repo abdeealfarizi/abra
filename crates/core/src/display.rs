@@ -54,6 +54,8 @@ impl Monitor {
 pub enum Screen {
     #[default]
     Primary,
+    Active,
+    All,
     Nth(u8),
 }
 
@@ -63,6 +65,8 @@ impl Screen {
     pub fn parse(s: &str) -> Option<Screen> {
         match s.trim().to_ascii_lowercase().as_str() {
             "primary" | "utama" | "main" => Some(Screen::Primary),
+            "active" | "cursor" | "kursor" | "follow" => Some(Screen::Active),
+            "all" | "semua" | "todos" => Some(Screen::All),
             v => v.parse::<u8>().ok().filter(|n| (1..=MAX_SCREENS).contains(n)).map(Screen::Nth),
         }
     }
@@ -70,6 +74,8 @@ impl Screen {
     pub fn key(self) -> &'static str {
         match self {
             Screen::Primary => "primary",
+            Screen::Active => "active",
+            Screen::All => "all",
             Screen::Nth(1) => "1",
             Screen::Nth(2) => "2",
             Screen::Nth(3) => "3",
@@ -89,7 +95,7 @@ pub fn primary(list: &[Monitor]) -> Option<Monitor> {
 
 pub fn resolve(screen: Screen, list: &[Monitor]) -> Option<Monitor> {
     match screen {
-        Screen::Primary => primary(list),
+        Screen::Primary | Screen::Active | Screen::All => primary(list),
         Screen::Nth(n) => ordered(list.to_vec()).get(n as usize - 1).copied().or_else(|| primary(list)),
     }
 }
@@ -132,7 +138,7 @@ mod tests {
 
     #[test]
     fn screen_keys_round_trip() {
-        for s in [Screen::Primary, Screen::Nth(1), Screen::Nth(2), Screen::Nth(3), Screen::Nth(4)] {
+        for s in [Screen::Primary, Screen::Active, Screen::All, Screen::Nth(1), Screen::Nth(2), Screen::Nth(3), Screen::Nth(4)] {
             assert_eq!(Screen::parse(s.key()), Some(s));
         }
         assert_eq!(Screen::parse("utama"), Some(Screen::Primary));

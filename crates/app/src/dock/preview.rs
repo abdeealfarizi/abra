@@ -2,7 +2,6 @@ use crate::popup::Popup;
 use nacre_platform::text::{render, Style};
 use nacre_platform::wins::thumbnail;
 use nacre_ui::gfx::Gfx;
-use nacre_ui::glass::GlassParams;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use windows::core::w;
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionStretch, Compositor};

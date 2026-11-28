@@ -32,7 +32,6 @@ pub enum Action {
     MeetingJoin,
     SendDone,
     TodoToggle(u32),
-    TodoAdd,
     TodoClear,
     TodoField,
     NextTab,
@@ -243,7 +242,6 @@ pub struct Live {
 
 const ORANGE: [u8; 3] = [255, 159, 10];
 const GREEN: [u8; 3] = [48, 209, 88];
-const INK: [u8; 3] = [22, 22, 24];
 const SURFACE: Color = Color { A: 255, R: 27, G: 27, B: 31 };
 
 fn surface(p: &Painter, c: &ContainerVisual, x: f32, y: f32, w: f32, h: f32, r: f32) {
@@ -270,11 +268,12 @@ fn tab_accent(t: Tab, d: &Data) -> [u8; 3] {
     }
 }
 
-fn localized(id: &'static str, en: &'static str, es: &'static str) -> &'static str {
+fn localized(id: &'static str, en: &'static str, es: &'static str, vi: &'static str) -> &'static str {
     match crate::prefs::get().lang {
         nacre_core::i18n::Lang::Id => id,
         nacre_core::i18n::Lang::En => en,
         nacre_core::i18n::Lang::Es => es,
+        nacre_core::i18n::Lang::Vi => vi,
     }
 }
 
@@ -283,15 +282,19 @@ fn tab_title(t: Tab) -> (&'static str, &'static str) {
         (Tab::Play, nacre_core::i18n::Lang::Id) => ("Sedang", "Diputar"),
         (Tab::Play, nacre_core::i18n::Lang::En) => ("Now", "Playing"),
         (Tab::Play, nacre_core::i18n::Lang::Es) => ("En", "reproducción"),
+        (Tab::Play, nacre_core::i18n::Lang::Vi) => ("Đang", "Phát"),
         (Tab::Shelf, nacre_core::i18n::Lang::Id) => ("Rak", "Berkas"),
         (Tab::Shelf, nacre_core::i18n::Lang::En) => ("File", "Shelf"),
         (Tab::Shelf, nacre_core::i18n::Lang::Es) => ("Archivos", "guardados"),
+        (Tab::Shelf, nacre_core::i18n::Lang::Vi) => ("Kệ", "Tệp"),
         (Tab::Timer, nacre_core::i18n::Lang::Id) => ("Sesi", "Fokus"),
         (Tab::Timer, nacre_core::i18n::Lang::En) => ("Focus", "Session"),
         (Tab::Timer, nacre_core::i18n::Lang::Es) => ("Sesión", "de enfoque"),
+        (Tab::Timer, nacre_core::i18n::Lang::Vi) => ("Phiên", "Tập trung"),
         (Tab::Todo, nacre_core::i18n::Lang::Id) => ("Daftar", "Tugas"),
         (Tab::Todo, nacre_core::i18n::Lang::En) => ("Task", "List"),
         (Tab::Todo, nacre_core::i18n::Lang::Es) => ("Lista", "de tareas"),
+        (Tab::Todo, nacre_core::i18n::Lang::Vi) => ("Việc", "Cần làm"),
     }
 }
 
@@ -389,6 +392,7 @@ pub(super) fn count_text(n: usize) -> String {
         nacre_core::i18n::Lang::Id => format!("{n} berkas"),
         nacre_core::i18n::Lang::En => format!("{n} {}", if n == 1 { "file" } else { "files" }),
         nacre_core::i18n::Lang::Es => format!("{n} {}", if n == 1 { "archivo" } else { "archivos" }),
+        nacre_core::i18n::Lang::Vi => format!("{n} tệp"),
     }
 }
 
@@ -969,13 +973,13 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         let hw = p.measure(&hero, 38.0, 800);
         p.text(c, &hero, lx, top - p.px(4.0), 38.0, 800, WHITE, 1.0, Anchor::Left, hw + p.px(6.0));
         p.text(c, &format!("/{}", d.todo_total), lx + hw + p.px(2.0), top + p.px(7.0), 22.0, 700, GREEN, 0.95, Anchor::Left, p.px(80.0));
-        let sub = localized("tugas selesai", "tasks done", "tareas completadas");
+        let sub = localized("tugas selesai", "tasks done", "tareas completadas", "việc đã xong");
         p.text(c, sub, lx + p.px(2.0), top + p.px(42.0), 12.5, 500, WHITE, 0.55, Anchor::Left, lw);
     } else {
         p.sym(c, Sym::Check, lx + p.px(14.0), top + p.px(14.0), 20.0, GREEN, 0.9);
-        let msg = localized("Belum ada tugas", "No tasks yet", "Aún no hay tareas");
+        let msg = localized("Belum ada tugas", "No tasks yet", "Aún no hay tareas", "Chưa có việc nào");
         p.text(c, msg, lx, top + p.px(34.0), 13.0, 600, WHITE, 0.85, Anchor::Left, lw);
-        let hint = localized("Atau tekan Ctrl+Alt+N", "Or press Ctrl+Alt+N", "O pulsa Ctrl+Alt+N");
+        let hint = localized("Atau tekan Ctrl+Alt+N", "Or press Ctrl+Alt+N", "O pulsa Ctrl+Alt+N", "Hoặc nhấn Ctrl+Alt+N");
         p.text(c, hint, lx, top + p.px(52.0), 11.5, 500, WHITE, 0.5, Anchor::Left, lw);
     }
     let mut ly = top + p.px(66.0);
@@ -989,7 +993,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         let cy = ly + bh / 2.0;
         p.rect(c, ck - r, cy - r, 2.0 * r, 2.0 * r, r, rgb(GREEN, 255));
         p.sym(c, Sym::Plus, ck, cy, 10.0, WHITE, 1.0);
-        let label = localized("Tambah tugas", "Add a task", "Añadir una tarea");
+        let label = localized("Tambah tugas", "Add a task", "Añadir una tarea", "Thêm việc");
         let th = p.px(13.0) * 1.3;
         p.text(c, label, ck + r + p.px(9.0), cy - th / 2.0, 13.0, 700, if editing { WHITE } else { GREEN }, 1.0, Anchor::Left, lw - p.px(40.0));
         regions.push(Region { x: lx, y: ly, w: lw, h: bh, action: Action::TodoField, vis: group_since(c, n0) });
@@ -1008,7 +1012,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         ly += ch + p.px(8.0);
     }
     if d.todo_more > 0 {
-        let more = format!("+{} {}", d.todo_more, localized("lainnya", "more", "más"));
+        let more = format!("+{} {}", d.todo_more, localized("lainnya", "more", "más", "khác"));
         p.text(c, &more, lx + p.px(2.0), ly, 11.5, 600, WHITE, 0.5, Anchor::Left, lw);
     }
     let rx = lx + lw + p.px(14.0);
@@ -1055,7 +1059,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
         None => {
             if d.todo.is_empty() {
                 let mh = p.px(13.0) * 1.3;
-                let msg = localized("Daftarmu kosong. Santai dulu.", "Your list is empty. Enjoy the quiet.", "Tu lista está vacía. Disfruta la calma.");
+                let msg = localized("Daftarmu kosong. Santai dulu.", "Your list is empty. Enjoy the quiet.", "Tu lista está vacía. Disfruta la calma.", "Danh sách trống. Nghỉ ngơi chút nhé.");
                 p.text(c, msg, rx + rw / 2.0, top + p.px(52.0) - mh / 2.0, 13.0, 500, WHITE, 0.5, Anchor::Center, rw);
             }
             return;
@@ -1072,7 +1076,7 @@ fn todo_tab(p: &mut Painter, c: &ContainerVisual, f: Frame, d: &Data, regions: &
             let avail = rw - p.px(30.0) - chip_w;
             let caret_h = row_h - p.px(14.0);
             if text.is_empty() {
-                let ph = localized("Ketik tugas \u{00B7} mis. 15:30 rapat", "Type a task \u{00B7} e.g. 15:30 meeting", "Escribe una tarea \u{00B7} p. ej., reunión a las 15:30");
+                let ph = localized("Ketik tugas \u{00B7} mis. 15:30 rapat", "Type a task \u{00B7} e.g. 15:30 meeting", "Escribe una tarea \u{00B7} p. ej., reunión a las 15:30", "Nhập việc cần làm \u{00B7} vd 15:30 họp");
                 p.text(c, ph, tx, cy - lh / 2.0, 14.0, 500, WHITE, 0.4, Anchor::Left, avail);
                 if *caret {
                     p.rect(c, tx, cy - caret_h / 2.0, p.px(1.8), caret_h, p.px(0.9), rgb(GREEN, 255));

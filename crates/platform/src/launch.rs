@@ -24,10 +24,35 @@ fn off_thread(job: impl FnOnce() + Send + 'static) {
 }
 
 pub fn open(path: &str) {
+    if let Some(w) = crate::wins::identity::parse_webapp(path) {
+        let raw = w.cmd.trim().to_string();
+        let (file, args) = split_command(&raw);
+        if !file.is_empty() {
+            off_thread(move || unsafe {
+                let p = if args.is_empty() { None } else { Some(HSTRING::from(args.as_str())) };
+                let parm = p.as_ref().map(|h| windows::core::PCWSTR(h.as_ptr())).unwrap_or(windows::core::PCWSTR::null());
+                ShellExecuteW(None, w!("open"), &HSTRING::from(file.as_str()), parm, None, SW_SHOWNORMAL);
+            });
+            return;
+        }
+    }
     let path = path.split('?').next().unwrap_or(path).to_string();
     off_thread(move || unsafe {
         ShellExecuteW(None, w!("open"), &HSTRING::from(path.as_str()), None, None, SW_SHOWNORMAL);
     });
+}
+
+fn split_command(cmd: &str) -> (String, String) {
+    let t = cmd.trim();
+    if let Some(rest) = t.strip_prefix('"') {
+        if let Some((exe, tail)) = rest.split_once('"') {
+            return (exe.trim().to_string(), tail.trim().to_string());
+        }
+    }
+    match t.split_once(char::is_whitespace) {
+        Some((exe, tail)) => (exe.trim().to_string(), tail.trim().to_string()),
+        None => (t.to_string(), String::new()),
+    }
 }
 
 pub fn is_start_open() -> bool {

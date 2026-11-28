@@ -1,5 +1,8 @@
-use windows::core::{w, HSTRING, PCWSTR};
+use windows::core::{w, GUID, HSTRING, PCWSTR};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_SZ};
+use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
 
 const KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VirtualDesktops");
 
@@ -55,4 +58,19 @@ pub fn list() -> (Vec<String>, usize) {
         names.push("Desktop 1".to_string());
     }
     (names, idx)
+}
+
+pub fn move_window_to_desktop(hwnd: isize, index: usize) -> bool {
+    let ids = binary("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VirtualDesktops", w!("VirtualDesktopIDs")).unwrap_or_default();
+    let Some(b) = ids.chunks_exact(16).nth(index) else { return false };
+    let guid = GUID::from_values(
+        u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+        u16::from_le_bytes([b[4], b[5]]),
+        u16::from_le_bytes([b[6], b[7]]),
+        [b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]],
+    );
+    unsafe {
+        let Ok(mgr) = CoCreateInstance::<_, IVirtualDesktopManager>(&VirtualDesktopManager, None, CLSCTX_ALL) else { return false };
+        mgr.MoveWindowToDesktop(HWND(hwnd as *mut _), &guid).is_ok()
+    }
 }

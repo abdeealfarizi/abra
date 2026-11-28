@@ -27,7 +27,28 @@ impl Item {
     }
 }
 
+pub fn is_separator(path: &str) -> bool {
+    let t = path.trim();
+    t == "---" || t.to_ascii_lowercase().starts_with("sep:")
+}
+
+pub fn next_separator_path(existing: &[Pin]) -> String {
+    let mut n = 1usize;
+    loop {
+        let cand = format!("sep:{n}");
+        if !existing.iter().any(|p| p.path.eq_ignore_ascii_case(&cand)) {
+            return cand;
+        }
+        n += 1;
+    }
+}
+
 pub fn key_of(path: &str) -> String {
+    let lower = path.to_lowercase();
+    if let Some(rest) = lower.strip_prefix("webapp:") {
+        let id = rest.split('|').next().unwrap_or(rest);
+        return format!("webapp:{id}");
+    }
     path.replace('/', "\\").to_lowercase().split('\\').map(stable_segment).collect::<Vec<_>>().join("\\")
 }
 
@@ -79,6 +100,11 @@ fn display_name(w: &Win) -> String {
 }
 
 pub fn name_from_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("webapp:") {
+        if let Some(name) = rest.split('|').nth(3).filter(|s| !s.trim().is_empty()) {
+            return name.trim().to_string();
+        }
+    }
     let file = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let stem = match file.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem,
@@ -103,6 +129,9 @@ pub fn merge(pins: &[Pin], wins: &[Win], recent: &dyn Fn(isize) -> i64, seen: &m
     let mut extra: Vec<Item> = Vec::new();
     for w in wins {
         let key = key_of(&w.path);
+        if is_separator(&w.path) {
+            continue;
+        }
         let slot = items.iter_mut().chain(extra.iter_mut()).find(|i| i.key == key);
         match slot {
             Some(i) => {
@@ -175,6 +204,18 @@ mod tests {
         assert_eq!(items[0].path, new);
         assert_eq!(package_family(old).as_deref(), Some("Claude_pzs8sxrjxfjjc"));
         assert_eq!(package_family("C:\\Windows\\notepad.exe"), None);
+    }
+
+    #[test]
+    fn user_separators_stay_in_pinned_order_and_webapp_keys_are_distinct() {
+        let mut seen = vec![];
+        let pins = vec![pin("C:\\a.exe"), Pin { path: "sep:1".into(), name: "---".into() }, pin("C:\\b.exe")];
+        let items = merge(&pins, &[win(1, "webapp:tab1|firefox -tab 1|icon1|Docs"), win(2, "webapp:tab2|firefox -tab 2|icon2|Mail")], &|_| 0, &mut seen);
+        assert_eq!(items.len(), 5);
+        assert!(is_separator(&items[1].path));
+        assert!(items[1].pinned);
+        assert_ne!(items[3].key, items[4].key);
+        assert_eq!(items[3].name, "Docs");
     }
 
     #[test]
